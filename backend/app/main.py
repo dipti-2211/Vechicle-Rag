@@ -1,22 +1,30 @@
 """
-Vehicle Maintenance RAG — FastAPI Application Entry Point
+Vehicle Intelligence Assistant — FastAPI Application Entry Point
 
-This is the main application module. It configures:
+Configures:
 - CORS middleware for frontend access
-- Lifespan events for startup/shutdown
-- Health check endpoint
+- Error handling middleware for structured error responses
+- Database lifecycle (connect on startup, close on shutdown)
+- Health check endpoint with live stats
 - All API route registrations
 """
 
 import logging
+import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
+from app.models.database import init_database, close_database, get_database
+from app.models.schemas import HealthResponse
+from app.routes import documents as document_routes
+from app.routes import chat as chat_routes
+from app.services.document_service import DocumentService
 from app.utils.logging import setup_logging, get_logger
 
 logger = get_logger(__name__)
@@ -27,9 +35,8 @@ async def lifespan(app: FastAPI):
     """
     Application lifespan manager.
 
-    Runs setup on startup and cleanup on shutdown.
-    Future milestones will add ChromaDB initialization,
-    Supabase client setup, etc. here.
+    Startup: Initialize logging, database, and ensure directories exist.
+    Shutdown: Close database connection.
     """
     settings = get_settings()
 
@@ -42,9 +49,18 @@ async def lifespan(app: FastAPI):
         settings.app_env,
     )
 
+    # Ensure upload and data directories exist
+    Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
+    Path(settings.database_path).parent.mkdir(parents=True, exist_ok=True)
+
+    # Initialize SQLite database
+    await init_database(settings.database_path)
+    logger.info("Database initialized at: %s", settings.database_path)
+
     yield
 
     # ── Shutdown ─────────────────────────────────────────────────────
+    await close_database()
     logger.info("Shutting down %s", settings.app_name)
 
 
@@ -52,9 +68,8 @@ def create_app() -> FastAPI:
     """
     Application factory.
 
-    Creates and configures the FastAPI application instance.
-    Using a factory pattern makes testing easier and keeps
-    configuration centralized.
+    Creates and configures the FastAPI application instance
+    with middleware, error handlers, and routes.
     """
     settings = get_settings()
 
@@ -62,8 +77,9 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         version=settings.app_version,
         description=(
-            "AI-powered Vehicle Maintenance Assistant using "
-            "Retrieval-Augmented Generation (RAG) with Google Gemini."
+            "AI-powered Vehicle Intelligence Assistant using "
+            "Retrieval-Augmented Generation (RAG) with Google Gemini. "
+            "Upload vehicle documents and get intelligent answers."
         ),
         docs_url="/docs" if not settings.is_production else None,
         redoc_url="/redoc" if not settings.is_production else None,
@@ -79,23 +95,69 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── Health Check ─────────────────────────────────────────────────
-    @app.get("/health", tags=["System"])
-    async def health_check():
-        """
-        Health check endpoint.
+    # ── Global Error Handlers ────────────────────────────────────────
 
-        Returns the application status, version, and current timestamp.
-        Used by deployment platforms (Render) to verify the service is alive.
-        """
+    @app.exception_handler(404)
+    async def not_found_handler(request: Request, exc):
+        """Return structured JSON for 404 errors."""
         return JSONResponse(
+            status_code=404,
             content={
-                "status": "healthy",
-                "app": settings.app_name,
-                "version": settings.app_version,
-                "environment": settings.app_env,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
+                "error": "Not Found",
+                "detail": str(exc.detail) if hasattr(exc, "detail") else "Resource not found",
+                "status_code": 404,
+            },
+        )
+
+    @app.exception_handler(422)
+    async def validation_error_handler(request: Request, exc):
+        """Return structured JSON for validation errors."""
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "Validation Error",
+                "detail": str(exc) if not hasattr(exc, "detail") else str(exc.detail),
+                "status_code": 422,
+            },
+        )
+
+    @app.exception_handler(500)
+    async def internal_error_handler(request: Request, exc):
+        """Return structured JSON for unhandled server errors."""
+        logger.error("Internal server error: %s\n%s", exc, traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "Internal Server Error",
+                "detail": "An unexpected error occurred. Please try again.",
+                "status_code": 500,
+            },
+        )
+
+    # ── Health Check ─────────────────────────────────────────────────
+
+    @app.get("/health", tags=["System"], response_model=HealthResponse)
+    async def health_check() -> HealthResponse:
+        """
+        Health check endpoint with live statistics.
+
+        Returns status, version, environment, and document count.
+        Used by Render to verify the service is alive.
+        """
+        try:
+            db = get_database()
+            doc_service = DocumentService(db)
+            doc_count = await doc_service.get_document_count()
+        except Exception:
+            doc_count = 0
+
+        return HealthResponse(
+            status="healthy",
+            app=settings.app_name,
+            version=settings.app_version,
+            environment=settings.app_env,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            documents_count=doc_count,
         )
 
     @app.get("/", tags=["System"])
@@ -106,17 +168,28 @@ def create_app() -> FastAPI:
             "version": settings.app_version,
             "docs": "/docs",
             "health": "/health",
+            "endpoints": {
+                "documents": "/api/documents",
+                "chat": "/api/chat",
+            },
         }
 
     # ── Route Registration ───────────────────────────────────────────
-    # Routes will be registered here in future milestones:
-    # app.include_router(auth_router, prefix="/api/auth", tags=["Auth"])
-    # app.include_router(documents_router, prefix="/api/documents", tags=["Documents"])
-    # app.include_router(chat_router, prefix="/api/chat", tags=["Chat"])
+    app.include_router(
+        document_routes.router,
+        prefix="/api/documents",
+        tags=["Documents"],
+    )
+    app.include_router(
+        chat_routes.router,
+        prefix="/api/chat",
+        tags=["Chat"],
+    )
 
     logger.info(
-        "Application configured with CORS origins: %s",
+        "Application configured — CORS: %s | DB: %s",
         settings.cors_origins,
+        settings.database_path,
     )
 
     return app

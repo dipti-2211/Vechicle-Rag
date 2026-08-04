@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────
-# Vehicle Maintenance RAG — Python Dependencies
+# Vehicle Intelligence Assistant — Python Dependencies
 # ──────────────────────────────────────────────
 
 # ── Web Framework ────────────────────────────
@@ -11,11 +11,8 @@ python-multipart==0.0.*
 pydantic-settings==2.7.*
 python-dotenv==1.1.*
 
-# ── Supabase ─────────────────────────────────
-supabase==2.13.*
-
-# ── Auth (JWT) ───────────────────────────────
-python-jose[cryptography]==3.3.*
+# ── Database ─────────────────────────────────
+aiosqlite==0.21.*
 
 # ── Google Gemini ────────────────────────────
 google-genai==1.14.*
@@ -34,3 +31,6 @@ aiofiles==24.1.*
 
 # ── HTTP Client ──────────────────────────────
 httpx==0.28.*
+
+# ── SSE Streaming ───────────────────────────
+sse-starlette==2.4.*

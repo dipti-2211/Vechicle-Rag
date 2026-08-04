@@ -1,5 +1,5 @@
 """
-Vehicle Maintenance RAG — Application Configuration
+Vehicle Intelligence Assistant — Application Configuration
 
 Uses pydantic-settings to load environment variables with validation,
 defaults, and type coercion. All settings are centralized here.
@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     )
 
     # ── App ──────────────────────────────────────────────────────────
-    app_name: str = "Vehicle Maintenance RAG"
+    app_name: str = "Vehicle Intelligence Assistant"
     app_version: str = "1.0.0"
     app_env: str = "development"
     debug: bool = True
@@ -37,28 +37,11 @@ class Settings(BaseSettings):
         """Parse comma-separated CORS origins into a list."""
         return [origin.strip() for origin in self.allowed_origins.split(",")]
 
-    # ── Supabase ─────────────────────────────────────────────────────
-    supabase_url: str = ""
-    supabase_anon_key: str = ""
-    supabase_service_role_key: str = ""
-    supabase_jwt_secret: str = ""
-
-    # ── Google Gemini ────────────────────────────────────────────────
-    gemini_api_key: str = ""
-    gemini_llm_model: str = "gemini-2.0-flash"
-    gemini_embedding_model: str = "gemini-embedding-001"
-    gemini_embedding_dimensions: int = 3072
-
-    # ── ChromaDB ─────────────────────────────────────────────────────
-    chroma_persist_dir: str = "./chroma_data"
-    chroma_collection_prefix: str = "user_docs_"
-
-    # ── RAG Settings ─────────────────────────────────────────────────
-    chunk_size: int = 800
-    chunk_overlap: int = 200
-    top_k_results: int = 5
+    # ── Database ─────────────────────────────────────────────────────
+    database_path: str = "./data/vehicle_intelligence.db"
 
     # ── File Upload ──────────────────────────────────────────────────
+    upload_dir: str = "./uploads"
     max_file_size_mb: int = 50
     allowed_file_types: str = ".pdf,.csv,.xlsx,.docx,.txt"
 
@@ -71,6 +54,21 @@ class Settings(BaseSettings):
     def allowed_extensions(self) -> List[str]:
         """Parse comma-separated file extensions into a list."""
         return [ext.strip().lower() for ext in self.allowed_file_types.split(",")]
+
+    # ── Google Gemini ────────────────────────────────────────────────
+    gemini_api_key: str = ""
+    gemini_llm_model: str = "gemini-2.0-flash"
+    gemini_embedding_model: str = "gemini-embedding-001"
+    gemini_embedding_dimensions: int = 3072
+
+    # ── ChromaDB ─────────────────────────────────────────────────────
+    chroma_persist_dir: str = "./data/chroma"
+    chroma_collection_name: str = "vehicle_docs"
+
+    # ── RAG Settings ─────────────────────────────────────────────────
+    chunk_size: int = 800
+    chunk_overlap: int = 200
+    top_k_results: int = 5
 
     @property
     def is_production(self) -> bool:

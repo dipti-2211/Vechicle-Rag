@@ -18,6 +18,12 @@ env/
 # ChromaDB Data
 chroma_data/
 
+# Data directory (SQLite + ChromaDB)
+data/
+
+# Uploaded files
+uploads/
+
 # IDE
 .vscode/
 .idea/
