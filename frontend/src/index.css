@@ -5,6 +5,8 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 /* ── Custom Theme Variables ──────────────────────────────────────── */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   /* Primary palette — deep blue/indigo */
   --color-primary-50: #eef2ff;
