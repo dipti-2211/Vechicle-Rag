@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 
 import pandas as pd
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 
 logger = logging.getLogger(__name__)
 
