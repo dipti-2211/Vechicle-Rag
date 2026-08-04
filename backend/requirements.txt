@@ -1,0 +1,36 @@
+# ──────────────────────────────────────────────
+# Vehicle Maintenance RAG — Python Dependencies
+# ──────────────────────────────────────────────
+
+# ── Web Framework ────────────────────────────
+fastapi==0.115.*
+uvicorn[standard]==0.34.*
+python-multipart==0.0.*
+
+# ── Configuration ────────────────────────────
+pydantic-settings==2.7.*
+python-dotenv==1.1.*
+
+# ── Supabase ─────────────────────────────────
+supabase==2.13.*
+
+# ── Auth (JWT) ───────────────────────────────
+python-jose[cryptography]==3.3.*
+
+# ── Google Gemini ────────────────────────────
+google-genai==1.14.*
+
+# ── Vector Database ──────────────────────────
+chromadb==1.5.*
+
+# ── Document Parsers ────────────────────────
+PyMuPDF==1.25.*
+python-docx==1.1.*
+pandas==2.2.*
+openpyxl==3.1.*
+
+# ── Async File I/O ──────────────────────────
+aiofiles==24.1.*
+
+# ── HTTP Client ──────────────────────────────
+httpx==0.28.*
