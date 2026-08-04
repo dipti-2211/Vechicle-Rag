@@ -93,6 +93,7 @@ class DocumentService:
         file_type: str,
         file_size: int,
         file_path: str,
+        doc_id: Optional[str] = None,
     ) -> DocumentResponse:
         """
         Create a new document record in the database.
@@ -105,11 +106,12 @@ class DocumentService:
             file_type: File extension (pdf, csv, xlsx, docx, txt).
             file_size: File size in bytes.
             file_path: Path where the file is stored.
+            doc_id: Optional UUID. If not provided, one is generated.
 
         Returns:
             The created DocumentResponse.
         """
-        doc_id = str(uuid.uuid4())
+        doc_id = doc_id or str(uuid.uuid4())
         filename = f"{doc_id}.{file_type}"
 
         await self.db.execute(
