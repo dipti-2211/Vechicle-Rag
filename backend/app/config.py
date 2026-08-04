@@ -39,7 +39,7 @@ class Settings(BaseSettings):
 
     # ── Database ─────────────────────────────────────────────────────
     database_path: str = "./data/vehicle_intelligence.db"
-
+    
     # ── File Upload ──────────────────────────────────────────────────
     upload_dir: str = "./uploads"
     max_file_size_mb: int = 50
