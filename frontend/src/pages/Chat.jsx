@@ -4,6 +4,7 @@ import {
   Send,
   Plus,
   Trash2,
+  Download,
   MessageSquare,
   Bot,
   User,
@@ -493,9 +494,39 @@ export default function Chat() {
                 }`}>
                   {conv.title}
                 </span>
+
+                {/* Export button */}
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    try {
+                      const apiBase = import.meta.env.VITE_API_URL || '';
+                      const res = await fetch(`${apiBase}/api/chat/conversations/${conv.id}/export`);
+                      if (!res.ok) throw new Error('Export failed');
+                      const blob = await res.blob();
+                      const disposition = res.headers.get('Content-Disposition') || '';
+                      const match = disposition.match(/filename="(.+?)"/);
+                      const filename = match ? match[1] : `conversation_${conv.id}.md`;
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url; a.download = filename; a.click();
+                      URL.revokeObjectURL(url);
+                      toast.success('Conversation exported!');
+                    } catch {
+                      toast.error('Export failed.');
+                    }
+                  }}
+                  title="Export as Markdown"
+                  className="opacity-0 group-hover:opacity-100 p-1 rounded text-surface-400 hover:text-primary-600 dark:hover:text-primary-400 transition-all"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Delete button */}
                 <button
                   onClick={(e) => deleteConversation(conv.id, e)}
                   className="opacity-0 group-hover:opacity-100 p-1 rounded text-surface-400 hover:text-danger-500 transition-all"
+                  title="Delete conversation"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>

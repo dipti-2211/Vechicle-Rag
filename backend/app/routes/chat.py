@@ -22,6 +22,7 @@ Feedback & Analytics:
 
 import json
 import logging
+from datetime import date
 from typing import AsyncGenerator, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -445,3 +446,87 @@ async def get_analytics() -> AnalyticsResponse:
     """Return analytics across all conversations and documents."""
     service = _get_service()
     return await service.get_analytics()
+
+
+# ── Export Endpoint ─────────────────────────────────────────────────────────────
+
+@router.get(
+    "/conversations/{conversation_id}/export",
+    summary="Export conversation as Markdown",
+    description=(
+        "Returns a downloadable .md file containing the full conversation transcript. "
+        "Each turn shows the user question and assistant answer with source citations."
+    ),
+    response_class=StreamingResponse,
+    responses={404: {"model": ErrorResponse}},
+)
+async def export_conversation(conversation_id: str) -> StreamingResponse:
+    """
+    Build a Markdown document from all messages in the conversation and
+    return it as a file download.
+    """
+    service = _get_service()
+
+    # Fetch conversation metadata
+    conv = await service.get_conversation(conversation_id)
+    if conv is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Conversation not found: {conversation_id}",
+        )
+
+    # Fetch all messages
+    msg_response = await service.get_messages(conversation_id)
+    messages = msg_response.messages if msg_response else []
+
+    # Build Markdown content
+    today = date.today().isoformat()
+    title = conv.title or "Conversation"
+    lines = [
+        f"# {title}",
+        f"",
+        f"*Exported: {today} — Vehicle Intelligence Assistant*",
+        f"",
+        "---",
+        "",
+    ]
+
+    for msg in messages:
+        if msg.role == "user":
+            lines.append(f"**👤 You:**")
+            lines.append(f"")
+            lines.append(msg.content)
+            lines.append(f"")
+        else:
+            lines.append(f"**🤖 Assistant:**")
+            lines.append(f"")
+            lines.append(msg.content)
+            lines.append(f"")
+            # Sources
+            if msg.sources:
+                src_parts = []
+                for src in msg.sources:
+                    pct = f" ({round(src.relevance_score * 100)}%)" if src.relevance_score else ""
+                    src_parts.append(f"{src.document_name}{pct}")
+                lines.append(f"*Sources: {', '.join(src_parts)}*")
+                lines.append(f"")
+            # Rating
+            if msg.rating == 1:
+                lines.append("*Rating: 👍 Helpful*")
+            elif msg.rating == -1:
+                lines.append("*Rating: 👎 Not helpful*")
+            lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    md_content = "\n".join(lines)
+
+    # Sanitise filename
+    safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in title)[:60].strip()
+    filename = f"{safe_title}_{today}.md"
+
+    return StreamingResponse(
+        iter([md_content]),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

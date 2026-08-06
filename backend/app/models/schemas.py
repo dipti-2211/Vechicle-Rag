@@ -240,3 +240,21 @@ class AnalyticsResponse(BaseModel):
     satisfaction_rate: Optional[int] = None  # Percentage (0–100), None if no rated answers
     documents: DocumentStatusCounts
     top_documents: list[dict] = []          # [{"name": str, "query_count": int}]
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Document Preview Schema
+# ═══════════════════════════════════════════════════════════════════
+
+class DocumentPreviewResponse(BaseModel):
+    """Response model for the document content preview endpoint."""
+
+    document_id: str
+    filename: str
+    original_filename: str
+    status: str
+    vehicle_name: Optional[str] = None
+    manufacturer: Optional[str] = None
+    preview: str                          # First ~800 chars of parsed content
+    preview_truncated: bool = False       # True if content was longer than preview
+    total_chars: Optional[int] = None     # Full content length (if available)

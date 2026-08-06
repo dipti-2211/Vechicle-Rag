@@ -12,6 +12,9 @@ import {
   Clock,
   RefreshCw,
   X,
+  Eye,
+  MessageSquare,
+  Cpu,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../api/axios';
@@ -60,9 +63,20 @@ export default function Documents() {
   const navigate = useNavigate();
   const { documents, loading, error, refetch } = useDocumentPolling();
 
-  const [search, setSearch]           = useState('');
-  const [activeTab, setActiveTab]     = useState('all');
-  const [confirmDelete, setConfirmDelete] = useState(null); // doc id pending delete
+  const [search, setSearch]               = useState('');
+  const [activeTab, setActiveTab]          = useState('all');
+  const [confirmDelete, setConfirmDelete]  = useState(null);
+  const [previewDoc, setPreviewDoc]        = useState(null);  // { doc, data, loading }
+
+  const openPreview = async (doc) => {
+    setPreviewDoc({ doc, data: null, loading: true });
+    try {
+      const res = await api.get(`/api/documents/${doc.id}/preview`);
+      setPreviewDoc({ doc, data: res.data, loading: false });
+    } catch {
+      setPreviewDoc({ doc, data: null, loading: false, error: true });
+    }
+  };
 
   // ── Derived lists ─────────────────────────────────────────────────
   const filtered = documents.filter(doc => {
@@ -240,9 +254,13 @@ export default function Documents() {
                           <FileText className="w-4 h-4 text-primary-600 dark:text-primary-400" />
                         </div>
                         <div className="min-w-0">
-                          <p className="font-medium text-surface-900 dark:text-surface-100 truncate max-w-[180px] sm:max-w-[260px]">
+                          <button
+                            onClick={() => openPreview(doc)}
+                            className="font-medium text-surface-900 dark:text-surface-100 truncate max-w-[180px] sm:max-w-[260px] hover:text-primary-600 dark:hover:text-primary-400 text-left block transition-colors"
+                            title="Click to preview content"
+                          >
                             {doc.original_filename}
-                          </p>
+                          </button>
                           <p className="text-xs text-surface-400 uppercase mt-0.5">{doc.file_type}</p>
                           {doc.status === 'error' && doc.error_message && (
                             <p className="text-xs text-danger-500 mt-0.5 truncate max-w-[200px]" title={doc.error_message}>
@@ -333,7 +351,119 @@ export default function Documents() {
             {search && <span>Searching: "{search}"</span>}
           </div>
         </div>
+        </div>
       )}
     </div>
+
+    {/* ── Document Preview Modal ──────────────────────────────────── */}
+    {previewDoc && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in"
+        onClick={() => setPreviewDoc(null)}
+      >
+        <div
+          className="bg-white dark:bg-surface-900 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col border border-surface-200 dark:border-surface-700"
+          onClick={e => e.stopPropagation()}
+        >
+          {/* Modal header */}
+          <div className="flex items-start justify-between px-6 py-4 border-b border-surface-200 dark:border-surface-800 flex-shrink-0">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center flex-shrink-0">
+                <FileText className="w-5 h-5 text-primary-600 dark:text-primary-400" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="font-semibold text-surface-900 dark:text-surface-100 truncate text-base">
+                  {previewDoc.doc.original_filename}
+                </h2>
+                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                  <span className="text-xs text-surface-400 uppercase">{previewDoc.doc.file_type}</span>
+                  {previewDoc.doc.vehicle_name && (
+                    <span className="text-xs bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 px-2 py-0.5 rounded-full">
+                      {previewDoc.doc.vehicle_name}
+                    </span>
+                  )}
+                  {previewDoc.doc.manufacturer && !previewDoc.doc.vehicle_name && (
+                    <span className="text-xs bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 px-2 py-0.5 rounded-full">
+                      {previewDoc.doc.manufacturer}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => setPreviewDoc(null)}
+              className="p-1.5 rounded-lg text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors flex-shrink-0 ml-2"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Modal body — preview content */}
+          <div className="flex-1 overflow-y-auto px-6 py-4">
+            {previewDoc.loading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-6 h-6 animate-spin text-primary-500" />
+                <span className="ml-2 text-surface-400 text-sm">Loading preview…</span>
+              </div>
+            ) : previewDoc.error ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <AlertCircle className="w-8 h-8 text-danger-400 mb-2" />
+                <p className="text-surface-500 text-sm">Failed to load preview.</p>
+              </div>
+            ) : !previewDoc.data ? null : (
+              <>
+                {/* Stats row */}
+                <div className="flex items-center gap-4 mb-4 text-xs text-surface-400">
+                  {previewDoc.data.total_chars != null && (
+                    <span>{previewDoc.data.total_chars.toLocaleString()} characters total</span>
+                  )}
+                  {previewDoc.doc.chunk_count > 0 && (
+                    <span>{previewDoc.doc.chunk_count} chunks indexed</span>
+                  )}
+                </div>
+
+                {/* Content preview */}
+                <div className="bg-surface-50 dark:bg-surface-800 rounded-xl p-4 font-mono text-sm text-surface-700 dark:text-surface-300 whitespace-pre-wrap leading-relaxed border border-surface-200 dark:border-surface-700">
+                  {previewDoc.data.preview}
+                  {previewDoc.data.preview_truncated && (
+                    <span className="text-surface-400 not-italic font-sans block mt-2">
+                      … (content truncated — showing first 800 characters)
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Modal footer */}
+          <div className="px-6 py-4 border-t border-surface-200 dark:border-surface-800 flex items-center justify-between flex-shrink-0">
+            <p className="text-xs text-surface-400">
+              <Eye className="w-3.5 h-3.5 inline mr-1" />
+              Content preview
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPreviewDoc(null)}
+                className="px-4 py-2 text-sm rounded-lg border border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-400 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
+              >
+                Close
+              </button>
+              {previewDoc.doc.status === 'ready' && (
+                <button
+                  onClick={() => {
+                    setPreviewDoc(null);
+                    navigate('/chat');
+                  }}
+                  className="px-4 py-2 text-sm rounded-lg bg-primary-600 hover:bg-primary-700 text-white font-medium transition-colors flex items-center gap-1.5"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  Ask about this doc
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
   );
 }

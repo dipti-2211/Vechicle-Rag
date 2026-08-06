@@ -26,6 +26,7 @@ from app.models.schemas import (
     DocumentResponse,
     DocumentListResponse,
     DocumentDeleteResponse,
+    DocumentPreviewResponse,
     DocumentStats,
     DocumentStatusResponse,
     ErrorResponse,
@@ -349,3 +350,69 @@ async def delete_document(document_id: str) -> DocumentDeleteResponse:
         )
 
     return result
+
+
+# ── Document Preview ──────────────────────────────────────────────────────────
+
+@router.get(
+    "/{document_id}/preview",
+    response_model=DocumentPreviewResponse,
+    summary="Preview document content",
+    description=(
+        "Returns the first 800 characters of a document's parsed text content. "
+        "Useful for verifying what was extracted from a file before querying."
+    ),
+    responses={404: {"model": ErrorResponse}},
+)
+async def preview_document(document_id: str) -> DocumentPreviewResponse:
+    """
+    Parse the stored file and return a content preview.
+    Re-uses DocumentParser so the result matches what's in the vector store.
+    """
+    PREVIEW_CHARS = 800
+
+    service = _get_service()
+    doc = await service.get_document(document_id)
+    if doc is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document not found: {document_id}",
+        )
+
+    if doc.status != "ready":
+        # Return metadata without parsing — file may not be usable yet
+        return DocumentPreviewResponse(
+            document_id=document_id,
+            filename=doc.filename,
+            original_filename=doc.original_filename,
+            status=doc.status,
+            vehicle_name=doc.vehicle_name,
+            manufacturer=doc.manufacturer,
+            preview=f"Document is not ready (status: {doc.status}). No preview available.",
+            preview_truncated=False,
+        )
+
+    try:
+        parser = DocumentParser()
+        text, _ = parser.parse(doc.file_path, doc.file_type)
+        total_chars = len(text)
+        truncated   = total_chars > PREVIEW_CHARS
+        preview     = text[:PREVIEW_CHARS].strip()
+
+        return DocumentPreviewResponse(
+            document_id=document_id,
+            filename=doc.filename,
+            original_filename=doc.original_filename,
+            status=doc.status,
+            vehicle_name=doc.vehicle_name,
+            manufacturer=doc.manufacturer,
+            preview=preview,
+            preview_truncated=truncated,
+            total_chars=total_chars,
+        )
+    except Exception as e:
+        logger.error("Preview failed for document %s: %s", document_id, e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate preview: {e}",
+        )
