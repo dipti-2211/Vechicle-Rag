@@ -1,6 +1,19 @@
+"""
+Vehicle Intelligence Assistant — Vector Store Service
+
+Manages ChromaDB for vector storage and semantic retrieval.
+Uses sentence-transformers (all-MiniLM-L6-v2) locally for embeddings —
+no external API needed for indexing, keeping costs zero.
+
+Responsibilities:
+- Generate embeddings for document chunks
+- Store chunks in ChromaDB with metadata
+- Semantic search over stored chunks
+- Delete all chunks for a given document
+"""
+
 import logging
-import uuid
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
@@ -14,109 +27,191 @@ logger = logging.getLogger(__name__)
 class VectorStore:
     """Service to handle embedding generation and vector storage in ChromaDB."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.settings = get_settings()
-        
-        # 1. Initialize local embedding model using HuggingFace sentence-transformers.
-        # "all-MiniLM-L6-v2" is an excellent lightweight model for semantic search.
+
+        # 1. Load the local embedding model (downloaded once, cached after that).
+        #    all-MiniLM-L6-v2 produces 384-dim vectors, excellent for semantic search.
         logger.info("Loading embedding model all-MiniLM-L6-v2...")
-        self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-        
-        # 2. Initialize ChromaDB Client
-        logger.info(f"Initializing ChromaDB at {self.settings.chroma_persist_dir}")
+        self.embedding_model = SentenceTransformer(
+            "all-MiniLM-L6-v2",
+            local_files_only=True,   # Use cached model; never make network calls
+        )
+
+        # 2. Initialize a persistent ChromaDB client (data survives restarts).
+        logger.info("Initializing ChromaDB at %s", self.settings.chroma_persist_dir)
         self.chroma_client = chromadb.PersistentClient(
             path=self.settings.chroma_persist_dir,
-            settings=ChromaSettings(anonymized_telemetry=False)
+            settings=ChromaSettings(anonymized_telemetry=False),
         )
-        
-        # 3. Get or create collection
+
+        # 3. Get or create the collection with cosine similarity (best for MiniLM).
         self.collection = self.chroma_client.get_or_create_collection(
             name=self.settings.chroma_collection_name,
-            metadata={"hnsw:space": "cosine"} # Cosine similarity works well for MiniLM
+            metadata={"hnsw:space": "cosine"},
         )
+        logger.info(
+            "ChromaDB collection '%s' ready (%d items)",
+            self.settings.chroma_collection_name,
+            self.collection.count(),
+        )
+
+    # ── Private helpers ───────────────────────────────────────────────
 
     def _get_embeddings(self, texts: List[str]) -> List[List[float]]:
         """Generate vector embeddings for a list of texts."""
         if not texts:
             return []
-        
-        # sentence-transformers returns a numpy array, we convert to list of floats
+        # SentenceTransformer returns a numpy array → convert to plain Python list
         embeddings = self.embedding_model.encode(texts, show_progress_bar=False)
         return embeddings.tolist()
 
-    def add_chunks(self, document_id: str, chunks: List[str], metadata: Optional[Dict[str, Any]] = None) -> None:
+    # ── Public API ───────────────────────────────────────────────────
+
+    def add_chunks(
+        self,
+        document_id: str,
+        chunks: List[str],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """
-        Embed and insert chunks into the vector database.
-        
+        Embed and insert document chunks into ChromaDB.
+
         Args:
-            document_id: The ID of the document these chunks belong to.
-            chunks: List of text chunks.
-            metadata: Optional base metadata to attach to every chunk.
+            document_id: UUID of the parent document.
+            chunks: List of text chunks to embed and store.
+            metadata: Optional base metadata attached to every chunk
+                      (e.g. filename, file_type).
         """
         if not chunks:
+            logger.warning("add_chunks called with empty chunk list for doc %s", document_id)
             return
 
-        logger.info(f"Generating embeddings for {len(chunks)} chunks of document {document_id}...")
+        logger.info(
+            "Generating embeddings for %d chunks of document %s...",
+            len(chunks),
+            document_id,
+        )
         embeddings = self._get_embeddings(chunks)
-        
-        # Prepare data for Chroma
+
+        # Build per-chunk IDs and metadata
         ids = [f"{document_id}_{i}" for i in range(len(chunks))]
-        
-        base_metadata = metadata or {}
-        metadatas = []
-        for i in range(len(chunks)):
-            meta = base_metadata.copy()
-            meta["document_id"] = document_id
-            meta["chunk_index"] = i
-            metadatas.append(meta)
-            
-        logger.info(f"Inserting {len(chunks)} chunks into ChromaDB collection '{self.settings.chroma_collection_name}'...")
+        base_meta = metadata or {}
+        metadatas = [
+            {**base_meta, "document_id": document_id, "chunk_index": i}
+            for i in range(len(chunks))
+        ]
+
+        logger.info(
+            "Inserting %d chunks into ChromaDB collection '%s'...",
+            len(chunks),
+            self.settings.chroma_collection_name,
+        )
         self.collection.add(
             ids=ids,
             embeddings=embeddings,
             metadatas=metadatas,
-            documents=chunks
+            documents=chunks,
         )
-        logger.info("Insertion complete.")
+        logger.info("Insertion complete for document %s.", document_id)
 
-    def search(self, query: str, top_k: int = 5, document_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def delete_chunks(self, document_id: str) -> int:
         """
-        Search the vector database for the most relevant chunks.
-        
+        Remove all vector chunks belonging to a document from ChromaDB.
+
         Args:
-            query: The search query string.
-            top_k: Number of results to return.
-            document_ids: Optional list of document IDs to filter by.
-            
+            document_id: UUID of the document whose chunks should be deleted.
+
         Returns:
-            List of dictionaries containing the text, metadata, and distance.
+            Number of chunks deleted.
         """
-        logger.info(f"Searching vector store for: '{query}'")
-        
+        try:
+            # Query how many chunks exist for this document
+            existing = self.collection.get(
+                where={"document_id": document_id},
+                include=[],  # Only return IDs
+            )
+            ids_to_delete = existing.get("ids", [])
+
+            if not ids_to_delete:
+                logger.info("No vector chunks found for document %s — nothing to delete.", document_id)
+                return 0
+
+            self.collection.delete(ids=ids_to_delete)
+            logger.info(
+                "Deleted %d vector chunks for document %s.",
+                len(ids_to_delete),
+                document_id,
+            )
+            return len(ids_to_delete)
+        except Exception as e:
+            logger.error("Failed to delete chunks for document %s: %s", document_id, e)
+            return 0
+
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        document_ids: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Semantic search over stored chunks.
+
+        Args:
+            query: The natural language query.
+            top_k: Maximum number of results to return.
+            document_ids: Optional list of document IDs to scope the search.
+
+        Returns:
+            List of dicts: [{text, metadata, distance}, ...]
+            Lower distance = more similar (cosine distance).
+        """
+        if not query.strip():
+            return []
+
+        # Guard: if collection is empty, return early to avoid ChromaDB error
+        if self.collection.count() == 0:
+            logger.info("Vector store is empty — no results for query.")
+            return []
+
+        logger.info("Searching vector store for: '%s'", query)
         query_embedding = self._get_embeddings([query])[0]
-        
-        # Build filter if document_ids provided
-        where_filter = None
+
+        # Build optional where-filter for document scoping
+        where_filter: Optional[Dict[str, Any]] = None
         if document_ids:
             if len(document_ids) == 1:
                 where_filter = {"document_id": document_ids[0]}
             else:
                 where_filter = {"document_id": {"$in": document_ids}}
-                
+
+        # Clamp top_k to available count to avoid ChromaDB errors
+        available = self.collection.count()
+        n_results = min(top_k, available)
+        if n_results == 0:
+            return []
+
         results = self.collection.query(
             query_embeddings=[query_embedding],
-            n_results=top_k,
+            n_results=n_results,
             where=where_filter,
-            include=["documents", "metadatas", "distances"]
+            include=["documents", "metadatas", "distances"],
         )
-        
-        formatted_results = []
-        if results and results["documents"] and len(results["documents"]) > 0:
-            for i in range(len(results["documents"][0])):
-                formatted_results.append({
-                    "text": results["documents"][0][i],
-                    "metadata": results["metadatas"][0][i],
-                    "distance": results["distances"][0][i]
-                })
-                
-        return formatted_results
+
+        formatted: List[Dict[str, Any]] = []
+        if results and results["documents"] and results["documents"][0]:
+            for i, text in enumerate(results["documents"][0]):
+                formatted.append(
+                    {
+                        "text": text,
+                        "metadata": results["metadatas"][0][i],
+                        "distance": results["distances"][0][i],
+                    }
+                )
+
+        logger.info("Search returned %d results.", len(formatted))
+        return formatted
+
+    def get_collection_count(self) -> int:
+        """Return total number of vectors in the collection."""
+        return self.collection.count()

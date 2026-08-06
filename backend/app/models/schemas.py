@@ -5,8 +5,7 @@ All request/response models for the API.
 Using Pydantic v2 for validation, serialization, and documentation.
 """
 
-from datetime import datetime
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -55,6 +54,26 @@ class DocumentDeleteResponse(BaseModel):
 
     id: str
     message: str = "Document deleted successfully"
+
+
+class DocumentStats(BaseModel):
+    """Aggregate statistics across all documents."""
+
+    total: int = 0
+    ready: int = 0
+    processing: int = 0
+    error: int = 0
+    total_chunks: int = 0
+    total_size_bytes: int = 0
+
+
+class DocumentStatusResponse(BaseModel):
+    """Lightweight status-only response for polling."""
+
+    id: str
+    status: str
+    chunk_count: int = 0
+    error_message: Optional[str] = None
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -143,6 +162,10 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = Field(
         default=None,
         description="Conversation ID to continue. If None, creates a new conversation.",
+    )
+    document_ids: Optional[list[str]] = Field(
+        default=None,
+        description="Optional list of document IDs to scope the RAG search. If None, searches all documents.",
     )
 
 

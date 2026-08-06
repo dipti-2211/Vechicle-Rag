@@ -1,9 +1,10 @@
 """
 Vehicle Intelligence Assistant — Document Service
 
-Business logic for document CRUD operations.
-This service talks to the SQLite database and manages document records.
-File processing (parse/chunk/embed) will be added in later milestones.
+Business logic for document CRUD operations:
+- CRUD for document metadata in SQLite
+- File deletion from the upload directory
+- Delegates vector cleanup to VectorStore (called by the route layer)
 """
 
 import json
@@ -177,9 +178,10 @@ class DocumentService:
 
     async def delete_document(self, document_id: str) -> Optional[DocumentDeleteResponse]:
         """
-        Delete a document record and its stored file.
+        Delete a document record and its stored file from disk.
 
-        Note: Vector store cleanup will be added in Milestone 8.
+        Note: The route layer is responsible for calling VectorStore.delete_chunks()
+        before calling this method to ensure vector cleanup happens first.
 
         Args:
             document_id: The document UUID.
@@ -191,8 +193,7 @@ class DocumentService:
         if doc is None:
             return None
 
-        # Delete the stored file
-        file_path = Path(doc.file_path) if hasattr(doc, 'file_path') else None
+        # Retrieve the stored file path from the DB (file_path is not on DocumentResponse)
         row = await self.db.fetch_one(
             "SELECT file_path FROM documents WHERE id = ?",
             (document_id,),
@@ -203,7 +204,7 @@ class DocumentService:
                 stored_file.unlink()
                 logger.info("Deleted file: %s", stored_file)
 
-        # Delete from database (messages cascade automatically via FK)
+        # Delete from database (cascade removes associated messages)
         await self.db.execute(
             "DELETE FROM documents WHERE id = ?",
             (document_id,),
@@ -217,3 +218,61 @@ class DocumentService:
         """Get the total number of documents."""
         row = await self.db.fetch_one("SELECT COUNT(*) as count FROM documents")
         return row["count"] if row else 0
+
+    async def get_document_stats(self):
+        """
+        Get aggregate document statistics in a single query.
+
+        Returns a dict with total, ready, processing, error counts,
+        total_chunks, and total_size_bytes.
+        """
+        from app.models.schemas import DocumentStats
+
+        row = await self.db.fetch_one(
+            """
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = 'ready'      THEN 1 ELSE 0 END) AS ready,
+                SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing,
+                SUM(CASE WHEN status = 'error'      THEN 1 ELSE 0 END) AS error,
+                COALESCE(SUM(chunk_count), 0) AS total_chunks,
+                COALESCE(SUM(file_size),  0) AS total_size_bytes
+            FROM documents
+            """
+        )
+        if row is None:
+            return DocumentStats()
+        return DocumentStats(
+            total=row["total"] or 0,
+            ready=row["ready"] or 0,
+            processing=row["processing"] or 0,
+            error=row["error"] or 0,
+            total_chunks=row["total_chunks"] or 0,
+            total_size_bytes=row["total_size_bytes"] or 0,
+        )
+
+    async def get_document_status(self, document_id: str):
+        """
+        Return lightweight status info for a single document (for polling).
+
+        Args:
+            document_id: The document UUID.
+
+        Returns:
+            DocumentStatusResponse if found, None otherwise.
+        """
+        from app.models.schemas import DocumentStatusResponse
+
+        row = await self.db.fetch_one(
+            "SELECT id, status, chunk_count, error_message FROM documents WHERE id = ?",
+            (document_id,),
+        )
+        if row is None:
+            return None
+        return DocumentStatusResponse(
+            id=row["id"],
+            status=row["status"],
+            chunk_count=row["chunk_count"] or 0,
+            error_message=row.get("error_message"),
+        )
+

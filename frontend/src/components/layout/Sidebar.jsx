@@ -9,10 +9,10 @@ import {
   Moon,
   Wrench
 } from 'lucide-react';
-import { useTheme } from '../../contexts/ThemeContext';
+import { useTheme } from '../../contexts/useTheme';
 
 const NAV_ITEMS = [
-  { path: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/chat', label: 'Chat Assistant', icon: MessageSquare },
   { path: '/documents', label: 'Documents', icon: FileText },
   { path: '/upload', label: 'Upload Files', icon: UploadCloud },
