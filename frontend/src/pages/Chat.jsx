@@ -14,6 +14,8 @@ import {
   X,
   Filter,
   FileText,
+  ThumbsUp,
+  ThumbsDown,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -37,9 +39,27 @@ function SourceCitation({ source }) {
   );
 }
 
-function MessageBubble({ message }) {
+function MessageBubble({ message, onRate }) {
   const isUser = message.role === 'user';
   const isStreaming = message.isStreaming ?? false;
+  const [rating, setRating] = useState(message.rating ?? null);
+  const [isRating, setIsRating] = useState(false);
+
+  const handleRate = async (value) => {
+    if (isRating || isStreaming) return;
+    // Toggle off if clicking same rating
+    const newRating = rating === value ? null : value;
+    setRating(newRating);  // Optimistic update
+    setIsRating(true);
+    try {
+      await api.patch(`/api/chat/messages/${message.id}/rating`, { rating: newRating });
+      onRate?.(message.id, newRating);
+    } catch {
+      setRating(rating); // Revert on error
+    } finally {
+      setIsRating(false);
+    }
+  };
 
   return (
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} items-start group`}>
@@ -94,12 +114,44 @@ function MessageBubble({ message }) {
           </div>
         )}
 
-        {/* Timestamp */}
-        <p className="text-xs text-surface-400 px-1">
-          {message.created_at
-            ? new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            : ''}
-        </p>
+        {/* Thumbs feedback + timestamp row */}
+        <div className="flex items-center gap-3 px-1">
+          <p className="text-xs text-surface-400">
+            {message.created_at
+              ? new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              : ''}
+          </p>
+
+          {/* Feedback buttons — only on finished assistant messages */}
+          {!isUser && !isStreaming && message.id && !message.id.startsWith('temp') && (
+            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+              <button
+                onClick={() => handleRate(1)}
+                disabled={isRating}
+                title="Helpful"
+                className={`p-1 rounded-md transition-all ${
+                  rating === 1
+                    ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30'
+                    : 'text-surface-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-surface-100 dark:hover:bg-surface-700'
+                }`}
+              >
+                <ThumbsUp className="w-3.5 h-3.5" fill={rating === 1 ? 'currentColor' : 'none'} />
+              </button>
+              <button
+                onClick={() => handleRate(-1)}
+                disabled={isRating}
+                title="Not helpful"
+                className={`p-1 rounded-md transition-all ${
+                  rating === -1
+                    ? 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/30'
+                    : 'text-surface-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-surface-100 dark:hover:bg-surface-700'
+                }`}
+              >
+                <ThumbsDown className="w-3.5 h-3.5" fill={rating === -1 ? 'currentColor' : 'none'} />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -602,7 +654,7 @@ export default function Chat() {
           ) : (
             <>
               {messages.map(msg => (
-                <MessageBubble key={msg.id} message={msg} />
+                <MessageBubble key={msg.id} message={msg} onRate={() => {}} />
               ))}
               {/* Only show TypingIndicator when no streaming placeholder is present */}
               {isSending && !messages.some(m => m.isStreaming) && <TypingIndicator />}

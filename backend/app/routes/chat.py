@@ -14,6 +14,10 @@ Conversation CRUD:
 RAG Q&A:
 - POST   /api/chat/ask                              → Ask a question (RAG pipeline)
 - POST   /api/chat/stream                           → Ask a question with SSE streaming
+
+Feedback & Analytics:
+- PATCH  /api/chat/messages/{id}/rating             → Rate an answer (thumbs up/down)
+- GET    /api/analytics                             → Query and document analytics
 """
 
 import json
@@ -26,6 +30,7 @@ from pydantic import BaseModel, Field
 
 from app.models.database import get_database
 from app.models.schemas import (
+    AnalyticsResponse,
     ChatRequest,
     ChatResponse,
     ConversationCreate,
@@ -33,6 +38,8 @@ from app.models.schemas import (
     ConversationListResponse,
     ConversationDeleteResponse,
     MessageListResponse,
+    MessageResponse,
+    RatingUpdate,
     ErrorResponse,
 )
 from app.services.chat_service import ChatService
@@ -387,3 +394,54 @@ async def get_messages(conversation_id: str) -> MessageListResponse:
         )
 
     return result
+
+
+# ── Feedback Endpoint ─────────────────────────────────────────────────────────
+
+@router.patch(
+    "/messages/{message_id}/rating",
+    response_model=MessageResponse,
+    summary="Rate a message (thumbs up/down)",
+    description=(
+        "Set or clear a thumbs-up (1) or thumbs-down (-1) rating on an assistant message. "
+        "Send rating=null to remove an existing rating."
+    ),
+    responses={404: {"model": ErrorResponse}},
+)
+async def rate_message(message_id: str, body: RatingUpdate) -> MessageResponse:
+    """Rate an assistant message."""
+    # Validate rating value
+    if body.rating is not None and body.rating not in (1, -1):
+        raise HTTPException(
+            status_code=422,
+            detail="rating must be 1 (thumbs up), -1 (thumbs down), or null (remove).",
+        )
+
+    service = _get_service()
+    result = await service.rate_message(message_id, body.rating)
+
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Message not found: {message_id}",
+        )
+
+    logger.info("Message %s rated: %s", message_id, body.rating)
+    return result
+
+
+# ── Analytics Endpoint ────────────────────────────────────────────────────────
+
+@router.get(
+    "/analytics",
+    response_model=AnalyticsResponse,
+    summary="Get analytics summary",
+    description=(
+        "Returns aggregate analytics: total queries, thumbs-up/down counts, "
+        "satisfaction rate, document status breakdown, and top cited documents."
+    ),
+)
+async def get_analytics() -> AnalyticsResponse:
+    """Return analytics across all conversations and documents."""
+    service = _get_service()
+    return await service.get_analytics()

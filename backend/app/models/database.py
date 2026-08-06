@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS messages (
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
     content TEXT NOT NULL,
     sources TEXT DEFAULT '[]',
+    rating INTEGER DEFAULT NULL,   -- 1 = thumbs up, -1 = thumbs down, NULL = no rating
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
@@ -97,6 +98,19 @@ class Database:
         # Create tables
         await self._connection.executescript(SCHEMA_SQL)
         await self._connection.commit()
+
+        # ── Safe migrations for existing databases ────────────────────
+        # Add 'rating' column to messages if it doesn't exist yet
+        # (ALTER TABLE ADD COLUMN is idempotent-safe via try/except)
+        try:
+            await self._connection.execute(
+                "ALTER TABLE messages ADD COLUMN rating INTEGER DEFAULT NULL"
+            )
+            await self._connection.commit()
+            logger.info("Migration: added 'rating' column to messages table")
+        except Exception:
+            # Column already exists — this is expected on subsequent startups
+            pass
 
         logger.info("Database connected: %s", self.db_path)
 

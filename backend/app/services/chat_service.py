@@ -13,10 +13,12 @@ from typing import Optional
 
 from app.models.database import Database
 from app.models.schemas import (
+    AnalyticsResponse,
     ConversationCreate,
     ConversationResponse,
     ConversationListResponse,
     ConversationDeleteResponse,
+    DocumentStatusCounts,
     MessageResponse,
     MessageListResponse,
     SourceCitation,
@@ -195,6 +197,7 @@ class ChatService:
                     role=row["role"],
                     content=row["content"],
                     sources=sources,
+                    rating=row.get("rating"),
                     created_at=row["created_at"],
                 )
             )
@@ -259,5 +262,127 @@ class ChatService:
             role=role,
             content=content,
             sources=sources_parsed,
+            rating=None,
             created_at=row["created_at"] if row else "",
+        )
+
+    async def rate_message(
+        self,
+        message_id: str,
+        rating: Optional[int],
+    ) -> Optional[MessageResponse]:
+        """
+        Set or clear a thumbs-up/down rating on an assistant message.
+
+        Args:
+            message_id: The message UUID.
+            rating: 1 (up), -1 (down), or None (remove rating).
+
+        Returns:
+            Updated MessageResponse, or None if message not found.
+        """
+        # Verify message exists
+        row = await self.db.fetch_one("SELECT * FROM messages WHERE id = ?", (message_id,))
+        if row is None:
+            return None
+
+        await self.db.execute(
+            "UPDATE messages SET rating = ? WHERE id = ?",
+            (rating, message_id),
+        )
+        logger.info("Message %s rated: %s", message_id, rating)
+
+        # Fetch updated row
+        updated = await self.db.fetch_one("SELECT * FROM messages WHERE id = ?", (message_id,))
+        sources_raw = updated.get("sources", "[]")
+        try:
+            sources_list = json.loads(sources_raw) if isinstance(sources_raw, str) else sources_raw
+            sources = [SourceCitation(**s) for s in sources_list]
+        except (json.JSONDecodeError, TypeError):
+            sources = []
+
+        return MessageResponse(
+            id=updated["id"],
+            conversation_id=updated["conversation_id"],
+            role=updated["role"],
+            content=updated["content"],
+            sources=sources,
+            rating=updated.get("rating"),
+            created_at=updated["created_at"],
+        )
+
+    async def get_analytics(self) -> AnalyticsResponse:
+        """
+        Compute analytics across all conversations and documents.
+
+        Returns:
+            AnalyticsResponse with query counts, rating stats, and document breakdown.
+        """
+        # ── Query / rating counts ─────────────────────────────────────────
+        row = await self.db.fetch_one(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE role = 'assistant')              AS total_queries,
+                COUNT(*) FILTER (WHERE role = 'assistant' AND rating =  1) AS thumbs_up,
+                COUNT(*) FILTER (WHERE role = 'assistant' AND rating = -1) AS thumbs_down,
+                COUNT(*) FILTER (WHERE role = 'assistant' AND rating IS NULL) AS no_rating
+            FROM messages
+            """
+        )
+
+        total_queries = row["total_queries"] or 0
+        thumbs_up     = row["thumbs_up"]     or 0
+        thumbs_down   = row["thumbs_down"]   or 0
+        no_rating     = row["no_rating"]     or 0
+        rated = thumbs_up + thumbs_down
+        satisfaction_rate = round(thumbs_up / rated * 100) if rated > 0 else None
+
+        # ── Document status counts ─────────────────────────────────────────
+        doc_row = await self.db.fetch_one(
+            """
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = 'ready'      THEN 1 ELSE 0 END) AS ready,
+                SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing,
+                SUM(CASE WHEN status = 'error'      THEN 1 ELSE 0 END) AS error
+            FROM documents
+            """
+        )
+
+        docs = DocumentStatusCounts(
+            total=doc_row["total"] or 0,
+            ready=doc_row["ready"] or 0,
+            processing=doc_row["processing"] or 0,
+            error=doc_row["error"] or 0,
+        )
+
+        # ── Top documents by query count ─────────────────────────────────
+        # Count how often each document is cited in answers
+        top_rows = await self.db.fetch_all(
+            """
+            SELECT
+                json_extract(j.value, '$.document_name') AS name,
+                COUNT(*) AS query_count
+            FROM messages m,
+                 json_each(m.sources) j
+            WHERE m.role = 'assistant'
+            GROUP BY name
+            ORDER BY query_count DESC
+            LIMIT 5
+            """
+        )
+        top_docs = [
+            {"name": r["name"], "query_count": r["query_count"]}
+            for r in top_rows
+            if r["name"]
+        ]
+
+        return AnalyticsResponse(
+            total_queries=total_queries,
+            thumbs_up=thumbs_up,
+            thumbs_down=thumbs_down,
+            no_rating=no_rating,
+            satisfaction_rate=satisfaction_rate,
+            documents=docs,
+            top_documents=top_docs,
         )

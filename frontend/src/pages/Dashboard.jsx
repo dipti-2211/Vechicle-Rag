@@ -10,6 +10,9 @@ import {
   ArrowRight,
   Cpu,
   Database,
+  ThumbsUp,
+  ThumbsDown,
+  BarChart2,
 } from 'lucide-react';
 import api from '../api/axios';
 import { useDocumentPolling } from '../hooks/useDocumentPolling';
@@ -40,23 +43,82 @@ function StatusBadge({ status }) {
   );
 }
 
+/** Pure-SVG donut chart for document status breakdown */
+function DonutChart({ ready = 0, processing = 0, error = 0 }) {
+  const total = ready + processing + error;
+  const cx = 60, cy = 60, r = 48, stroke = 14;
+  const circumference = 2 * Math.PI * r;
+
+  // Build segments
+  const segments = [
+    { value: ready,      color: '#10b981', label: 'Ready' },
+    { value: processing, color: '#6366f1', label: 'Processing' },
+    { value: error,      color: '#f43f5e', label: 'Error' },
+  ].filter(s => s.value > 0);
+
+  if (total === 0) {
+    return (
+      <svg viewBox="0 0 120 120" className="w-28 h-28">
+        <circle cx={cx} cy={cy} r={r} fill="none"
+          stroke="currentColor" strokeWidth={stroke}
+          className="text-surface-200 dark:text-surface-700" />
+        <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
+          className="text-xs" fill="currentColor" fontSize="10">No docs</text>
+      </svg>
+    );
+  }
+
+  let offset = 0;
+  return (
+    <svg viewBox="0 0 120 120" className="w-28 h-28 -rotate-90">
+      {/* Background track */}
+      <circle cx={cx} cy={cy} r={r} fill="none"
+        stroke="#e2e8f0" strokeWidth={stroke} className="dark:stroke-surface-700" />
+      {segments.map((seg, i) => {
+        const dash = (seg.value / total) * circumference;
+        const gap  = circumference - dash;
+        const el = (
+          <circle key={i}
+            cx={cx} cy={cy} r={r} fill="none"
+            stroke={seg.color} strokeWidth={stroke}
+            strokeDasharray={`${dash} ${gap}`}
+            strokeDashoffset={-offset}
+            strokeLinecap="round"
+          />
+        );
+        offset += dash;
+        return el;
+      })}
+      {/* Centre label */}
+      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
+        fill="#64748b" fontSize="14" fontWeight="700"
+        transform={`rotate(90 ${cx} ${cy})`}>
+        {total}
+      </text>
+    </svg>
+  );
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   // useDocumentPolling gives us live data + auto-polls while any doc is processing
   const { documents, loading: docsLoading } = useDocumentPolling();
-  const [stats, setStats]   = useState(null);
-  const [health, setHealth] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [stats, setStats]       = useState(null);
+  const [health, setHealth]     = useState(null);
+  const [analytics, setAnalytics] = useState(null);
+  const [loading, setLoading]   = useState(true);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [statsRes, healthRes] = await Promise.all([
+        const [statsRes, healthRes, analyticsRes] = await Promise.all([
           api.get('/api/documents/stats'),
           api.get('/health'),
+          api.get('/api/chat/analytics'),
         ]);
         setStats(statsRes.data);
         setHealth(healthRes.data);
+        setAnalytics(analyticsRes.data);
       } catch (err) {
         console.error('Dashboard load error:', err);
       } finally {
@@ -242,6 +304,92 @@ export default function Dashboard() {
           </div>
         )}
       </section>
+
+      {/* Analytics Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+        {/* Donut Chart — Document Status */}
+        <section className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
+          <h2 className="font-semibold text-surface-900 dark:text-surface-100 mb-5 flex items-center gap-2">
+            <BarChart2 className="w-4 h-4 text-surface-400" />
+            Document Status
+          </h2>
+          <div className="flex items-center gap-6">
+            <DonutChart
+              ready={analytics?.documents?.ready ?? stats?.ready ?? 0}
+              processing={analytics?.documents?.processing ?? stats?.processing ?? 0}
+              error={analytics?.documents?.error ?? 0}
+            />
+            <div className="space-y-2.5 text-sm flex-1">
+              {[
+                { label: 'Ready',      value: analytics?.documents?.ready ?? 0,      color: 'bg-emerald-500' },
+                { label: 'Processing', value: analytics?.documents?.processing ?? 0,  color: 'bg-indigo-500' },
+                { label: 'Error',      value: analytics?.documents?.error ?? 0,       color: 'bg-rose-500' },
+              ].map(item => (
+                <div key={item.label} className="flex items-center gap-2">
+                  <span className={`w-2.5 h-2.5 rounded-full ${item.color} flex-shrink-0`} />
+                  <span className="text-surface-600 dark:text-surface-400 flex-1">{item.label}</span>
+                  <span className="font-semibold text-surface-900 dark:text-surface-100">{item.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* Satisfaction Card */}
+        <section className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
+          <h2 className="font-semibold text-surface-900 dark:text-surface-100 mb-5 flex items-center gap-2">
+            <ThumbsUp className="w-4 h-4 text-surface-400" />
+            Answer Feedback
+          </h2>
+
+          {loading ? (
+            <div className="h-24 rounded-xl bg-surface-100 dark:bg-surface-800 animate-pulse" />
+          ) : analytics?.total_queries === 0 ? (
+            <div className="text-center py-6">
+              <p className="text-surface-400 text-sm">No queries yet.</p>
+              <button onClick={() => navigate('/chat')} className="mt-2 text-sm text-primary-600 dark:text-primary-400 hover:underline">Ask the assistant →</button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Satisfaction rate big number */}
+              <div className="flex items-end gap-3">
+                <p className={`text-5xl font-black ${
+                  analytics.satisfaction_rate == null ? 'text-surface-400'
+                  : analytics.satisfaction_rate >= 70 ? 'text-emerald-600 dark:text-emerald-400'
+                  : analytics.satisfaction_rate >= 40 ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-rose-600 dark:text-rose-400'
+                }`}>
+                  {analytics.satisfaction_rate != null ? `${analytics.satisfaction_rate}%` : '—'}
+                </p>
+                <p className="text-surface-400 text-sm mb-1.5">satisfaction rate</p>
+              </div>
+
+              {/* Bar breakdown */}
+              <div className="space-y-2">
+                {[
+                  { label: 'Helpful',     value: analytics.thumbs_up,   total: analytics.total_queries, color: 'bg-emerald-500', icon: ThumbsUp },
+                  { label: 'Not helpful', value: analytics.thumbs_down,  total: analytics.total_queries, color: 'bg-rose-500',    icon: ThumbsDown },
+                  { label: 'No rating',  value: analytics.no_rating,    total: analytics.total_queries, color: 'bg-surface-300 dark:bg-surface-600', icon: null },
+                ].map(item => (
+                  <div key={item.label} className="flex items-center gap-2 text-xs">
+                    <span className="w-20 text-surface-500 flex-shrink-0">{item.label}</span>
+                    <div className="flex-1 h-2 bg-surface-100 dark:bg-surface-700 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full ${item.color} rounded-full transition-all duration-500`}
+                        style={{ width: item.total > 0 ? `${(item.value / item.total) * 100}%` : '0%' }}
+                      />
+                    </div>
+                    <span className="w-6 text-right font-semibold text-surface-700 dark:text-surface-300">{item.value}</span>
+                  </div>
+                ))}
+              </div>
+
+              <p className="text-xs text-surface-400">{analytics.total_queries} total answer{analytics.total_queries !== 1 ? 's' : ''}</p>
+            </div>
+          )}
+        </section>
+      </div>
 
       {/* System Info */}
       {health && (

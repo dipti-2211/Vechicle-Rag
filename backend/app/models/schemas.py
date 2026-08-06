@@ -135,6 +135,7 @@ class MessageResponse(BaseModel):
     role: str  # 'user' or 'assistant'
     content: str
     sources: list[SourceCitation] = []
+    rating: Optional[int] = None  # 1 = thumbs up, -1 = thumbs down, None = not rated
     created_at: str
 
 
@@ -203,3 +204,39 @@ class HealthResponse(BaseModel):
     environment: str
     timestamp: str
     documents_count: int = 0
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Feedback & Analytics Schemas
+# ═══════════════════════════════════════════════════════════════════
+
+class RatingUpdate(BaseModel):
+    """Request model for rating a message."""
+
+    rating: Optional[int] = Field(
+        None,
+        description="1 = thumbs up, -1 = thumbs down, null = remove rating",
+    )
+
+    model_config = {"json_schema_extra": {"example": {"rating": 1}}}
+
+
+class DocumentStatusCounts(BaseModel):
+    """Document counts broken down by status."""
+
+    total: int
+    ready: int
+    processing: int
+    error: int
+
+
+class AnalyticsResponse(BaseModel):
+    """Response model for the analytics endpoint."""
+
+    total_queries: int
+    thumbs_up: int
+    thumbs_down: int
+    no_rating: int
+    satisfaction_rate: Optional[int] = None  # Percentage (0–100), None if no rated answers
+    documents: DocumentStatusCounts
+    top_documents: list[dict] = []          # [{"name": str, "query_count": int}]
