@@ -78,6 +78,9 @@ export default function Documents() {
     error:      documents.filter(d => d.status === 'error').length,
   };
 
+  // Show vehicle column only when at least one doc has metadata
+  const hasVehicleMeta = documents.some(d => d.vehicle_name || d.manufacturer);
+
   // ── Actions ───────────────────────────────────────────────────────
   const deleteDocument = async (id) => {
     try {
@@ -221,6 +224,7 @@ export default function Documents() {
                 <tr>
                   <th className="px-6 py-3.5">Document</th>
                   <th className="px-6 py-3.5">Status</th>
+                  {hasVehicleMeta && <th className="px-6 py-3.5 hidden md:table-cell">Vehicle</th>}
                   <th className="px-6 py-3.5 hidden sm:table-cell">Size</th>
                   <th className="px-6 py-3.5 hidden md:table-cell">Chunks</th>
                   <th className="px-6 py-3.5 hidden lg:table-cell">Uploaded</th>
@@ -252,6 +256,23 @@ export default function Documents() {
                     <td className="px-6 py-4">
                       <StatusBadge status={doc.status} />
                     </td>
+
+                    {hasVehicleMeta && (
+                      <td className="px-6 py-4 hidden md:table-cell">
+                        {doc.vehicle_name || doc.manufacturer ? (
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-surface-800 dark:text-surface-200 truncate max-w-[150px]">
+                              {doc.vehicle_name ?? doc.manufacturer}
+                            </p>
+                            {doc.vehicle_name && doc.manufacturer && (
+                              <p className="text-xs text-surface-400 truncate max-w-[150px]">{doc.manufacturer}</p>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-surface-300 dark:text-surface-600 text-sm">—</span>
+                        )}
+                      </td>
+                    )}
 
                     <td className="px-6 py-4 hidden sm:table-cell text-surface-500 dark:text-surface-400 text-sm">
                       {formatSize(doc.file_size)}

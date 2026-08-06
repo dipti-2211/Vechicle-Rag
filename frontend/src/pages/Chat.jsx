@@ -39,6 +39,8 @@ function SourceCitation({ source }) {
 
 function MessageBubble({ message }) {
   const isUser = message.role === 'user';
+  const isStreaming = message.isStreaming ?? false;
+
   return (
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} items-start group`}>
       {/* Avatar */}
@@ -59,11 +61,26 @@ function MessageBubble({ message }) {
         }`}>
           {isUser ? (
             <p className="whitespace-pre-wrap">{message.content}</p>
+          ) : isStreaming && !message.content ? (
+            /* Empty streaming placeholder — show bouncing dots */
+            <div className="flex gap-1 items-center h-5">
+              {[0, 1, 2].map(i => (
+                <span
+                  key={i}
+                  className="w-2 h-2 rounded-full bg-surface-400"
+                  style={{ animation: `pulse 1.4s ease-in-out ${i * 0.2}s infinite` }}
+                />
+              ))}
+            </div>
           ) : (
             <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-li:my-0.5 prose-headings:my-2">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {message.content}
               </ReactMarkdown>
+              {/* Blinking cursor while streaming */}
+              {isStreaming && (
+                <span className="inline-block w-0.5 h-4 bg-primary-500 ml-0.5 align-middle animate-pulse" />
+              )}
             </div>
           )}
         </div>
@@ -204,7 +221,7 @@ export default function Chat() {
     }
   };
 
-  // ── Send message ──────────────────────────────────────────────────
+  // ── Send message (streaming) ──────────────────────────────────────
   const sendMessage = async () => {
     const q = question.trim();
     if (!q || isSending) return;
@@ -213,61 +230,148 @@ export default function Chat() {
     setIsSending(true);
 
     // Optimistically add user message
-    const tempUserMsg = {
-      id: `temp-${Date.now()}`,
-      role: 'user',
-      content: q,
-      sources: [],
-      created_at: new Date().toISOString(),
-      conversation_id: activeConvId ?? '',
-    };
-    setMessages(prev => [...prev, tempUserMsg]);
+    const tempUserMsgId = `temp-user-${Date.now()}`;
+    const tempAsstMsgId = `temp-asst-${Date.now()}`;
+
+    setMessages(prev => [
+      ...prev,
+      {
+        id: tempUserMsgId,
+        role: 'user',
+        content: q,
+        sources: [],
+        created_at: new Date().toISOString(),
+        conversation_id: activeConvId ?? '',
+      },
+      // Placeholder assistant message — tokens stream into this
+      {
+        id: tempAsstMsgId,
+        role: 'assistant',
+        content: '',           // starts empty
+        sources: [],
+        created_at: new Date().toISOString(),
+        conversation_id: activeConvId ?? '',
+        isStreaming: true,     // custom flag for cursor display
+      },
+    ]);
+
+    let streamedConvId = activeConvId;
 
     try {
-      const res = await api.post('/api/chat/ask', {
-        question: q,
-        conversation_id: activeConvId,
-        document_ids: selectedDocIds.length > 0 ? selectedDocIds : undefined,
+      const apiBase = import.meta.env.VITE_API_URL || '';
+      const response = await fetch(`${apiBase}/api/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: q,
+          conversation_id: activeConvId,
+          document_ids: selectedDocIds.length > 0 ? selectedDocIds : undefined,
+        }),
       });
 
-      const { answer, sources, conversation_id, message_id } = res.data;
-
-      // Update conversation ID if this was a new conversation
-      if (!activeConvId) {
-        setActiveConvId(conversation_id);
-        // Reload conversations list to show the new one
-        const convsRes = await api.get('/api/chat/conversations');
-        setConversations(convsRes.data.conversations ?? []);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
       }
 
-      // Replace temp messages with real ones
-      setMessages(prev => {
-        const withoutTemp = prev.filter(m => m.id !== tempUserMsg.id);
-        return [
-          ...withoutTemp,
-          // Real user message (from conversation history) — approximate
-          { ...tempUserMsg, id: `user-${Date.now()}` },
-          {
-            id: message_id,
-            role: 'assistant',
-            content: answer,
-            sources: sources ?? [],
-            created_at: new Date().toISOString(),
-            conversation_id,
-          },
-        ];
-      });
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // SSE lines are separated by \n\n
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() ?? ''; // last incomplete line stays in buffer
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (!raw) continue;
+
+          let payload;
+          try { payload = JSON.parse(raw); } catch { continue; }
+
+          if (payload.token !== undefined) {
+            // Append token to assistant message
+            setMessages(prev => prev.map(m =>
+              m.id === tempAsstMsgId
+                ? { ...m, content: m.content + payload.token }
+                : m
+            ));
+          } else if (payload.done) {
+            // Full answer + sources received
+            setMessages(prev => prev.map(m =>
+              m.id === tempAsstMsgId
+                ? { ...m, content: payload.full_answer, sources: payload.sources ?? [] }
+                : m
+            ));
+          } else if (payload.saved) {
+            // DB save confirmed — update temp ID to real message ID
+            const realMsgId = payload.message_id;
+            streamedConvId = payload.conversation_id;
+            setMessages(prev => prev.map(m =>
+              m.id === tempAsstMsgId
+                ? { ...m, id: realMsgId, isStreaming: false, conversation_id: streamedConvId }
+                : m.id === tempUserMsgId
+                  ? { ...m, id: `user-${Date.now()}` }
+                  : m
+            ));
+            // Update conversation list if this was a new conversation
+            if (!activeConvId) {
+              setActiveConvId(streamedConvId);
+              const convsRes = await api.get('/api/chat/conversations');
+              setConversations(convsRes.data.conversations ?? []);
+            }
+          } else if (payload.error) {
+            throw new Error(payload.error);
+          }
+        }
+      }
 
     } catch (err) {
-      // Remove temp message on failure
-      setMessages(prev => prev.filter(m => m.id !== tempUserMsg.id));
-      const detail = err.response?.data?.detail ?? 'Failed to get a response. Please try again.';
-      toast.error(detail);
-      setQuestion(q); // Restore the question
+      // ── Fallback: non-streaming /api/chat/ask ────────────────────
+      console.warn('Streaming failed, falling back to /api/chat/ask:', err.message);
+      try {
+        const res = await api.post('/api/chat/ask', {
+          question: q,
+          conversation_id: activeConvId,
+          document_ids: selectedDocIds.length > 0 ? selectedDocIds : undefined,
+        });
+        const { answer, sources, conversation_id, message_id } = res.data;
+
+        if (!activeConvId) {
+          setActiveConvId(conversation_id);
+          const convsRes = await api.get('/api/chat/conversations');
+          setConversations(convsRes.data.conversations ?? []);
+        }
+
+        setMessages(prev => {
+          const withoutTemps = prev.filter(m => m.id !== tempUserMsgId && m.id !== tempAsstMsgId);
+          return [
+            ...withoutTemps,
+            { id: `user-${Date.now()}`, role: 'user', content: q, sources: [], created_at: new Date().toISOString(), conversation_id: conversation_id },
+            { id: message_id, role: 'assistant', content: answer, sources: sources ?? [], created_at: new Date().toISOString(), conversation_id },
+          ];
+        });
+
+      } catch (fallbackErr) {
+        setMessages(prev => prev.filter(m => m.id !== tempUserMsgId && m.id !== tempAsstMsgId));
+        const detail = fallbackErr.response?.data?.detail ?? 'Failed to get a response.';
+        toast.error(detail);
+        setQuestion(q);
+      }
     } finally {
+      // Clear the streaming flag from the assistant message (in case of error path)
+      setMessages(prev => prev.map(m => m.isStreaming ? { ...m, isStreaming: false } : m));
       setIsSending(false);
       inputRef.current?.focus();
     }
+
   };
 
   const handleKeyDown = (e) => {
@@ -500,7 +604,8 @@ export default function Chat() {
               {messages.map(msg => (
                 <MessageBubble key={msg.id} message={msg} />
               ))}
-              {isSending && <TypingIndicator />}
+              {/* Only show TypingIndicator when no streaming placeholder is present */}
+              {isSending && !messages.some(m => m.isStreaming) && <TypingIndicator />}
             </>
           )}
           <div ref={bottomRef} />

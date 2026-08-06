@@ -13,12 +13,15 @@ Conversation CRUD:
 
 RAG Q&A:
 - POST   /api/chat/ask                              → Ask a question (RAG pipeline)
+- POST   /api/chat/stream                           → Ask a question with SSE streaming
 """
 
+import json
 import logging
-from typing import Optional
+from typing import AsyncGenerator, Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.models.database import get_database
@@ -161,6 +164,110 @@ async def ask_question(body: ChatRequest) -> ChatResponse:
         sources=sources,
         conversation_id=conversation_id,
         message_id=assistant_msg.id,
+    )
+
+
+@router.post(
+    "/stream",
+    summary="Ask a question with streaming response (SSE)",
+    description=(
+        "Same as /ask but streams the answer token-by-token as Server-Sent Events. "
+        "Each event is: data: {\"token\": \"...\"}\n"
+        "The final event is: data: {\"done\": true, \"sources\": [...], "
+        '"message_id": \"...\", "conversation_id\": \"...\"}'
+    ),
+    response_class=StreamingResponse,
+)
+async def stream_question(body: ChatRequest) -> StreamingResponse:
+    """
+    Streaming RAG endpoint — yields SSE tokens, saves message to DB at end.
+    """
+    service = _get_service()
+    rag = _get_rag_service()
+
+    # ── Step 1–3: Same conversation / history setup as /ask ────────────
+    if body.conversation_id:
+        conv = await service.get_conversation(body.conversation_id)
+        if conv is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        conversation_id = body.conversation_id
+    else:
+        short_title = body.question[:60] + ("..." if len(body.question) > 60 else "")
+        conv = await service.create_conversation(
+            ConversationCreate(title=short_title)
+        )
+        conversation_id = conv.id
+
+    # Save user message
+    await service.add_message(
+        conversation_id=conversation_id,
+        role="user",
+        content=body.question,
+        sources=[],
+    )
+
+    # Build conversation history
+    history_resp = await service.get_messages(conversation_id)
+    history = [
+        {"role": m.role, "content": m.content}
+        for m in history_resp.messages[:-1]  # exclude the message we just added
+        if m.role in ("user", "assistant")
+    ]
+
+    async def _event_stream() -> AsyncGenerator[str, None]:
+        """Inner generator: streams tokens then saves message to DB."""
+        full_answer = ""
+        sources_data: list = []
+
+        try:
+            async for sse_line in rag.answer_stream(
+                question=body.question,
+                conversation_history=history,
+                document_ids=body.document_ids or None,
+            ):
+                # Parse done event to extract metadata
+                if sse_line.startswith("data: "):
+                    payload = json.loads(sse_line[6:].strip())
+                    if payload.get("done"):
+                        full_answer = payload.get("full_answer", "")
+                        sources_data = payload.get("sources", [])
+                yield sse_line
+
+        except Exception as e:
+            logger.error("Stream error for conversation %s: %s", conversation_id, e)
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            return
+
+        # Save completed assistant message to DB
+        try:
+            from app.models.schemas import SourceCitation
+            citations = [
+                SourceCitation(
+                    document_name=s["document_name"],
+                    page_number=s.get("page_number"),
+                    section=s.get("section"),
+                    relevance_score=s.get("relevance_score"),
+                )
+                for s in sources_data
+            ]
+            assistant_msg = await service.add_message(
+                conversation_id=conversation_id,
+                role="assistant",
+                content=full_answer,
+                sources=citations,
+            )
+            # Emit a final metadata event with IDs
+            yield f"data: {json.dumps({'saved': True, 'message_id': assistant_msg.id, 'conversation_id': conversation_id})}\n\n"
+        except Exception as save_err:
+            logger.error("Failed to save streamed message: %s", save_err)
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",    # Disable nginx buffering
+        },
     )
 
 

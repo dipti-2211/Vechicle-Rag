@@ -31,9 +31,10 @@ from app.models.schemas import (
     ErrorResponse,
 )
 from app.services.document_service import DocumentService
+from app.services.vector_store import VectorStore
 from app.services.parser import DocumentParser
 from app.services.chunker import DocumentChunker
-from app.services.vector_store import VectorStore
+from app.services.metadata_extractor import MetadataExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -119,12 +120,18 @@ async def _process_document(doc_id: str, file_path: str, file_type: str, origina
             },
         )
 
+        # ── Step 3.5: Extract vehicle metadata ────────────────────────
+        logger.info("[%s] Step 3.5 — Extracting vehicle metadata...", doc_id)
+        metadata = MetadataExtractor.extract(text)
+
         # ── Step 4: Mark as ready ─────────────────────────────────────
         await service.update_document_status(
             document_id=doc_id,
             status="ready",
             chunk_count=len(chunks),
             page_count=page_count,
+            vehicle_name=metadata.get("vehicle_name"),
+            manufacturer=metadata.get("manufacturer"),
         )
         logger.info(
             "Pipeline complete for %s: %d chunks, %s pages",

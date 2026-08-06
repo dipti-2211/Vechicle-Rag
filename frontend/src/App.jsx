@@ -4,12 +4,12 @@ import { AppLayout } from './layouts/AppLayout'
 import { LoadingSpinner } from './components/ui/Loading'
 
 // Code-split all page components — each page is loaded only when first visited.
-// This eliminates the >500 KB bundle warning and improves initial load time.
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Chat      = lazy(() => import('./pages/Chat'))
 const Documents = lazy(() => import('./pages/Documents'))
 const Upload    = lazy(() => import('./pages/Upload'))
 const Settings  = lazy(() => import('./pages/Settings'))
+const NotFound  = lazy(() => import('./pages/NotFound'))
 
 /** Full-page suspense fallback shown while a lazy page chunk loads */
 function PageLoading() {
@@ -23,7 +23,7 @@ function PageLoading() {
 /**
  * Main App Component
  * Sets up routing with lazy-loaded pages inside the AppLayout shell.
- * All page routes are wrapped in Suspense for graceful loading states.
+ * The catch-all route shows a proper 404 Not Found page.
  */
 function App() {
   return (
@@ -40,8 +40,8 @@ function App() {
         <Route path="/settings"  element={<Suspense fallback={<PageLoading />}><Settings /></Suspense>} />
       </Route>
 
-      {/* Catch-all route */}
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      {/* Proper 404 page — shown outside the AppLayout so it's full-screen */}
+      <Route path="*" element={<Suspense fallback={<PageLoading />}><NotFound /></Suspense>} />
     </Routes>
   )
 }

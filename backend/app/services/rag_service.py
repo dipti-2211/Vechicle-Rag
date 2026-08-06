@@ -10,8 +10,9 @@ Orchestrates the full Retrieval-Augmented Generation pipeline:
 This service is called by the POST /api/chat/ask endpoint.
 """
 
+import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from google import genai
 from google.genai import types
@@ -108,6 +109,60 @@ class RagService:
         )
         return answer_text, sources
 
+    async def answer_stream(
+        self,
+        question: str,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+        document_ids: Optional[List[str]] = None,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Streaming version of answer() — yields Server-Sent Event strings.
+
+        Each yielded string is a complete SSE line:
+          data: {"token": "..."}
+
+        The final event carries the full metadata:
+          data: {"done": true, "sources": [...], "full_answer": "..."}
+
+        Args:
+            question: The user's natural language question.
+            conversation_history: Optional prior turns for multi-turn context.
+            document_ids: Optional list of document IDs to scope the search.
+
+        Yields:
+            SSE-formatted strings (each ending with double newline).
+        """
+        # ── Step 1: Retrieve ─────────────────────────────────────────
+        vector_store = self._get_vector_store()
+        chunks = vector_store.search(
+            question, top_k=self.settings.top_k_results, document_ids=document_ids
+        )
+        sources = self._build_citations(chunks)
+
+        # ── Step 2: Build prompt ──────────────────────────────────────
+        rag_prompt = build_rag_prompt(question, chunks)
+
+        # ── Step 3: Stream from Gemini ──────────────────────────────
+        full_answer_parts: List[str] = []
+        async for token in self._call_gemini_stream(rag_prompt, conversation_history):
+            full_answer_parts.append(token)
+            yield f"data: {json.dumps({'token': token})}\n\n"
+
+        full_answer = "".join(full_answer_parts).strip()
+
+        # ── Final event with metadata ─────────────────────────────────
+        sources_data = [
+            {
+                "document_name": s.document_name,
+                "page_number": s.page_number,
+                "section": s.section,
+                "relevance_score": s.relevance_score,
+            }
+            for s in sources
+        ]
+        yield f"data: {json.dumps({'done': True, 'sources': sources_data, 'full_answer': full_answer})}\n\n"
+        logger.info("Streaming RAG complete. Length: %d, Sources: %d", len(full_answer), len(sources))
+
     # ── Private helpers ───────────────────────────────────────────────
 
     def _build_citations(self, chunks: List[Dict[str, Any]]) -> List[SourceCitation]:
@@ -203,3 +258,65 @@ class RagService:
         except Exception as e:
             logger.error("Gemini API call failed: %s", e)
             raise RuntimeError(f"Failed to generate answer: {e}") from e
+
+    async def _call_gemini_stream(
+        self,
+        prompt: str,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Async generator that streams Gemini response tokens.
+
+        Yields:
+            Raw text tokens from Gemini's streaming API.
+        """
+        try:
+            import asyncio
+            client = self._get_gemini_client()
+            model_name = self.settings.gemini_llm_model
+
+            contents: List[Any] = []
+            if conversation_history:
+                for turn in conversation_history[-10:]:
+                    role = "user" if turn["role"] == "user" else "model"
+                    contents.append(
+                        types.Content(
+                            role=role,
+                            parts=[types.Part(text=turn["content"])],
+                        )
+                    )
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[types.Part(text=prompt)],
+                )
+            )
+
+            # Gemini's generate_content_stream is synchronous — run in thread pool
+            loop = asyncio.get_event_loop()
+            response_iter = await loop.run_in_executor(
+                None,
+                lambda: client.models.generate_content_stream(
+                    model=model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=VEHICLE_ASSISTANT_SYSTEM_PROMPT,
+                        temperature=0.2,
+                        max_output_tokens=2048,
+                    ),
+                ),
+            )
+
+            for chunk in response_iter:
+                token = chunk.text
+                if token:
+                    yield token
+                    # Yield control back to event loop between chunks
+                    await asyncio.sleep(0)
+
+        except ValueError as e:
+            logger.error("Gemini stream config error: %s", e)
+            raise
+        except Exception as e:
+            logger.error("Gemini stream failed: %s", e)
+            raise RuntimeError(f"Streaming failed: {e}") from e
