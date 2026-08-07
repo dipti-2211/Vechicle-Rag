@@ -57,6 +57,25 @@ async def lifespan(app: FastAPI):
     await init_database(settings.database_path)
     logger.info("Database initialized at: %s", settings.database_path)
 
+    # ── Environment validation ────────────────────────────────────────
+    # Warn loudly if critical config is missing — don't hard-crash so
+    # Docker health checks can still respond during misconfiguration.
+    _missing: list[str] = []
+    if not settings.gemini_api_key:
+        _missing.append("GEMINI_API_KEY")
+    if not settings.gemini_llm_model:
+        _missing.append("GEMINI_MODEL")
+
+    if _missing:
+        logger.critical(
+            "⚠️  MISSING REQUIRED ENVIRONMENT VARIABLES: %s\n"
+            "   Copy backend/.env.example → backend/.env and fill in the values.\n"
+            "   RAG query features will NOT work until this is fixed.",
+            ", ".join(_missing),
+        )
+    else:
+        logger.info("✅ Environment validated — all required variables present.")
+
     yield
 
     # ── Shutdown ─────────────────────────────────────────────────────

@@ -1,0 +1,53 @@
+# ─────────────────────────────────────────────────────────────────────
+# Vehicle Intelligence Assistant — Docker Compose
+#
+# Quick start:
+#   cp backend/.env.example backend/.env   # add your GEMINI_API_KEY
+#   docker compose up --build
+#
+# Access:
+#   Frontend:  http://localhost
+#   Backend:   http://localhost:8000
+#   API Docs:  http://localhost:8000/docs
+# ─────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Backend (FastAPI + RAG) ─────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      - CORS_ORIGINS=http://localhost,http://frontend
+    volumes:
+      # Persist documents, database, and vector store between container restarts
+      - backend_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  # ── Frontend (React + nginx) ────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+# ── Volumes ─────────────────────────────────────────────────────────
+volumes:
+  backend_data:
+    driver: local
