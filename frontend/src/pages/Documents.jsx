@@ -14,7 +14,6 @@ import {
   X,
   Eye,
   MessageSquare,
-  Cpu,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../api/axios';
@@ -111,6 +110,7 @@ export default function Documents() {
   // Render
   // ─────────────────────────────────────────────────────────────────
   return (
+    <>
     <div className="space-y-6 animate-fade-in">
 
       {/* Header */}
@@ -351,9 +351,9 @@ export default function Documents() {
             {search && <span>Searching: "{search}"</span>}
           </div>
         </div>
-        </div>
       )}
     </div>
+
 
     {/* ── Document Preview Modal ──────────────────────────────────── */}
     {previewDoc && (
@@ -465,5 +465,6 @@ export default function Documents() {
         </div>
       </div>
     )}
+  </>
   );
 }

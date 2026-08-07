@@ -392,9 +392,16 @@ async def preview_document(document_id: str) -> DocumentPreviewResponse:
             preview_truncated=False,
         )
 
+    # file_path is intentionally excluded from DocumentResponse (security).
+    # Fetch it directly from the raw database row.
+    db = get_database()
+    raw = await db.fetch_one("SELECT file_path, file_type FROM documents WHERE id = ?", (document_id,))
+    if raw is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {document_id}")
+
     try:
         parser = DocumentParser()
-        text, _ = parser.parse(doc.file_path, doc.file_type)
+        text = parser.parse(raw["file_path"], raw["file_type"])
         total_chars = len(text)
         truncated   = total_chars > PREVIEW_CHARS
         preview     = text[:PREVIEW_CHARS].strip()
@@ -416,3 +423,4 @@ async def preview_document(document_id: str) -> DocumentPreviewResponse:
             status_code=500,
             detail=f"Failed to generate preview: {e}",
         )
+
