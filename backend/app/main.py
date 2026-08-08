@@ -76,6 +76,20 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("✅ Environment validated — all required variables present.")
 
+    # ── Eagerly initialize the VectorStore (loads embedding model) ─────────────
+    # This MUST happen at startup, not inside background tasks.
+    # If the model loads inside a background task after the HTTP response is sent,
+    # the OS can close the connection (Broken Pipe / EPIPE).
+    # Pre-loading here ensures the singleton is ready before any uploads arrive.
+    try:
+        from app.routes.documents import _get_vector_store
+        logger.info("Pre-loading embedding model and ChromaDB...")
+        _get_vector_store()  # warm up the singleton
+        logger.info("✅ VectorStore ready.")
+    except Exception as vs_err:
+        logger.error("VectorStore failed to initialize: %s", vs_err)
+        # Don't crash — uploads will still work, embeddings will fail gracefully
+
     yield
 
     # ── Shutdown ─────────────────────────────────────────────────────

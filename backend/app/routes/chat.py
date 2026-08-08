@@ -44,7 +44,7 @@ from app.models.schemas import (
     ErrorResponse,
 )
 from app.services.chat_service import ChatService
-from app.services.rag_service import RagService
+from app.services.rag_service import RagService, QUOTA_ERROR_MSG
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +132,7 @@ async def ask_question(body: ChatRequest) -> ChatResponse:
         for msg in history_response.messages[:-1]:  # Exclude the just-added user message
             history.append({"role": msg.role, "content": msg.content})
 
-    # ── Step 4: Run RAG pipeline ──────────────────────────────────────
+    # ── Step 4: Run RAG pipeline ────────────────────────────────────────────────
     try:
         answer_text, sources = await rag.answer(
             question=body.question,
@@ -145,6 +145,15 @@ async def ask_question(body: ChatRequest) -> ChatResponse:
         raise HTTPException(
             status_code=503,
             detail=str(e),
+        )
+    except RuntimeError as e:
+        err_str = str(e)
+        # Return 429 if this is a quota error, otherwise 500
+        status_code = 429 if QUOTA_ERROR_MSG in err_str else 500
+        logger.error("RAG pipeline error for conversation %s: %s", conversation_id, e)
+        raise HTTPException(
+            status_code=status_code,
+            detail=err_str,
         )
     except Exception as e:
         logger.error("RAG pipeline error for conversation %s: %s", conversation_id, e)
@@ -235,11 +244,21 @@ async def stream_question(body: ChatRequest) -> StreamingResponse:
             ):
                 # Parse done event to extract metadata
                 if sse_line.startswith("data: "):
-                    payload = json.loads(sse_line[6:].strip())
-                    if payload.get("done"):
-                        full_answer = payload.get("full_answer", "")
-                        sources_data = payload.get("sources", [])
+                    try:
+                        payload = json.loads(sse_line[6:].strip())
+                        if payload.get("done"):
+                            full_answer = payload.get("full_answer", "")
+                            sources_data = payload.get("sources", [])
+                    except json.JSONDecodeError:
+                        pass
                 yield sse_line
+
+        except RuntimeError as e:
+            err_str = str(e)
+            logger.error("Stream error for conversation %s: %s", conversation_id, e)
+            # Emit a clean SSE error event instead of a raw exception
+            yield f"data: {json.dumps({'error': err_str})}\n\n"
+            return
 
         except Exception as e:
             logger.error("Stream error for conversation %s: %s", conversation_id, e)

@@ -10,12 +10,20 @@ Orchestrates the full Retrieval-Augmented Generation pipeline:
 This service is called by the POST /api/chat/ask endpoint.
 """
 
+import asyncio
 import json
 import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from google import genai
 from google.genai import types
+from google.genai.errors import ClientError
+
+# User-friendly message when Gemini quota is exhausted
+QUOTA_ERROR_MSG = (
+    "Gemini API quota exceeded. The free-tier request limit has been reached. "
+    "Please try again later or provide a different API key with available quota."
+)
 
 from app.config import get_settings
 from app.models.schemas import SourceCitation
@@ -191,6 +199,30 @@ class RagService:
 
         return citations
 
+    def _build_gemini_contents(
+        self,
+        prompt: str,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+    ) -> List[Any]:
+        """Build the Gemini contents list, including prior conversation history."""
+        contents: List[Any] = []
+        if conversation_history:
+            for turn in conversation_history[-10:]:
+                role = "user" if turn["role"] == "user" else "model"
+                contents.append(
+                    types.Content(
+                        role=role,
+                        parts=[types.Part(text=turn["content"])],
+                    )
+                )
+        contents.append(
+            types.Content(
+                role="user",
+                parts=[types.Part(text=prompt)],
+            )
+        )
+        return contents
+
     async def _call_gemini(
         self,
         prompt: str,
@@ -198,63 +230,53 @@ class RagService:
     ) -> str:
         """
         Call the Gemini API and return the response text.
-
-        Args:
-            prompt: The RAG-augmented prompt with context.
-            conversation_history: Optional prior turns for multi-turn context.
-
-        Returns:
-            Generated answer string.
+        Runs the synchronous SDK in a thread pool to avoid blocking the event loop.
 
         Raises:
-            RuntimeError: If Gemini API call fails.
+            RuntimeError: With a user-friendly message if quota is exceeded (429)
+                          or if Gemini returns an error.
+            ValueError: If the API key is not configured.
         """
         try:
             client = self._get_gemini_client()
             model_name = self.settings.gemini_llm_model
-
-            # Build the contents list (multi-turn if history provided)
-            contents: List[Any] = []
-
-            # Add conversation history (last 10 turns max to stay within context)
-            if conversation_history:
-                for turn in conversation_history[-10:]:
-                    role = "user" if turn["role"] == "user" else "model"
-                    contents.append(
-                        types.Content(
-                            role=role,
-                            parts=[types.Part(text=turn["content"])],
-                        )
-                    )
-
-            # Add the current RAG prompt as the final user message
-            contents.append(
-                types.Content(
-                    role="user",
-                    parts=[types.Part(text=prompt)],
-                )
+            contents = self._build_gemini_contents(prompt, conversation_history)
+            config = types.GenerateContentConfig(
+                system_instruction=VEHICLE_ASSISTANT_SYSTEM_PROMPT,
+                temperature=0.2,
+                max_output_tokens=2048,
             )
 
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=VEHICLE_ASSISTANT_SYSTEM_PROMPT,
-                    temperature=0.2,       # Low temp for factual, grounded answers
-                    max_output_tokens=2048,
+            # Run the synchronous Gemini SDK call in a thread pool
+            # so we don't block the async event loop.
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=config,
                 ),
             )
 
             answer = response.text
             if not answer:
                 raise RuntimeError("Gemini returned an empty response.")
-
             return answer.strip()
+
+        except ClientError as e:
+            err_str = str(e)
+            if "429" in err_str:
+                logger.warning("Gemini quota exceeded (429): %s", e)
+                raise RuntimeError(QUOTA_ERROR_MSG)
+            logger.error("Gemini client error: %s", e)
+            raise RuntimeError(f"Gemini API error: {e}") from e
 
         except ValueError as e:
             # API key not configured
             logger.error("Gemini configuration error: %s", e)
             raise
+
         except Exception as e:
             logger.error("Gemini API call failed: %s", e)
             raise RuntimeError(f"Failed to generate answer: {e}") from e
@@ -271,25 +293,13 @@ class RagService:
             Raw text tokens from Gemini's streaming API.
         """
         try:
-            import asyncio
             client = self._get_gemini_client()
             model_name = self.settings.gemini_llm_model
-
-            contents: List[Any] = []
-            if conversation_history:
-                for turn in conversation_history[-10:]:
-                    role = "user" if turn["role"] == "user" else "model"
-                    contents.append(
-                        types.Content(
-                            role=role,
-                            parts=[types.Part(text=turn["content"])],
-                        )
-                    )
-            contents.append(
-                types.Content(
-                    role="user",
-                    parts=[types.Part(text=prompt)],
-                )
+            contents = self._build_gemini_contents(prompt, conversation_history)
+            config = types.GenerateContentConfig(
+                system_instruction=VEHICLE_ASSISTANT_SYSTEM_PROMPT,
+                temperature=0.2,
+                max_output_tokens=2048,
             )
 
             # Gemini's generate_content_stream is synchronous — run in thread pool
@@ -299,11 +309,7 @@ class RagService:
                 lambda: client.models.generate_content_stream(
                     model=model_name,
                     contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=VEHICLE_ASSISTANT_SYSTEM_PROMPT,
-                        temperature=0.2,
-                        max_output_tokens=2048,
-                    ),
+                    config=config,
                 ),
             )
 
@@ -314,9 +320,18 @@ class RagService:
                     # Yield control back to event loop between chunks
                     await asyncio.sleep(0)
 
+        except ClientError as e:
+            err_str = str(e)
+            if "429" in err_str:
+                logger.warning("Gemini quota exceeded (429) in stream: %s", e)
+                raise RuntimeError(QUOTA_ERROR_MSG)
+            logger.error("Gemini stream client error: %s", e)
+            raise RuntimeError(f"Gemini API error: {e}") from e
+
         except ValueError as e:
             logger.error("Gemini stream config error: %s", e)
             raise
+
         except Exception as e:
             logger.error("Gemini stream failed: %s", e)
             raise RuntimeError(f"Streaming failed: {e}") from e

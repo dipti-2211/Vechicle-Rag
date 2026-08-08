@@ -1,23 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  FileText,
-  MessageSquare,
-  UploadCloud,
-  CheckCircle,
-  Loader2,
-  AlertCircle,
-  ArrowRight,
-  Cpu,
-  Database,
-  ThumbsUp,
-  ThumbsDown,
-  BarChart2,
+  FileText, MessageSquare, UploadCloud, CheckCircle,
+  Loader2, AlertCircle, ArrowRight, Database,
+  BarChart2, Zap, TrendingUp, ChevronRight,
+  BookOpen, Clock, Star,
 } from 'lucide-react';
 import api from '../api/axios';
 import { useDocumentPolling } from '../hooks/useDocumentPolling';
 
-/** Format bytes to human-readable string */
 function formatBytes(bytes) {
   if (!bytes) return '0 B';
   const k = 1024;
@@ -26,394 +17,337 @@ function formatBytes(bytes) {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
-/** Status badge component */
 function StatusBadge({ status }) {
-  const config = {
-    ready:      { color: 'bg-accent-500/10 text-accent-600 dark:text-accent-400',      icon: CheckCircle, label: 'Ready' },
-    processing: { color: 'bg-primary-500/10 text-primary-600 dark:text-primary-400',   icon: Loader2,     label: 'Processing', spin: true },
-    error:      { color: 'bg-danger-500/10 text-danger-600 dark:text-danger-400',       icon: AlertCircle, label: 'Error' },
-  }[status] ?? { color: 'bg-surface-200 dark:bg-surface-700 text-surface-500', icon: FileText, label: status };
-
-  const Icon = config.icon;
+  const c = {
+    ready:      { cls: 'badge-ready',      icon: CheckCircle, label: 'Ready',      spin: false },
+    processing: { cls: 'badge-processing', icon: Loader2,     label: 'Processing', spin: true  },
+    error:      { cls: 'badge-error',      icon: AlertCircle, label: 'Error',      spin: false },
+  }[status] ?? { cls: 'badge-processing', icon: FileText, label: status, spin: false };
+  const Icon = c.icon;
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${config.color}`}>
-      <Icon className={`w-3 h-3 ${config.spin ? 'animate-spin' : ''}`} />
-      {config.label}
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${c.cls}`}>
+      <Icon className={`w-3 h-3 ${c.spin ? 'animate-spin' : ''}`} />
+      {c.label}
     </span>
   );
 }
 
-/** Pure-SVG donut chart for document status breakdown */
-function DonutChart({ ready = 0, processing = 0, error = 0 }) {
-  const total = ready + processing + error;
-  const cx = 60, cy = 60, r = 48, stroke = 14;
-  const circumference = 2 * Math.PI * r;
-
-  // Build segments
-  const segments = [
-    { value: ready,      color: '#10b981', label: 'Ready' },
-    { value: processing, color: '#6366f1', label: 'Processing' },
-    { value: error,      color: '#f43f5e', label: 'Error' },
-  ].filter(s => s.value > 0);
-
-  if (total === 0) {
-    return (
-      <svg viewBox="0 0 120 120" className="w-28 h-28">
-        <circle cx={cx} cy={cy} r={r} fill="none"
-          stroke="currentColor" strokeWidth={stroke}
-          className="text-surface-200 dark:text-surface-700" />
-        <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
-          className="text-xs" fill="currentColor" fontSize="10">No docs</text>
-      </svg>
-    );
-  }
-
-  let offset = 0;
+// Mini bar chart for document status distribution
+function MiniBarChart({ ready = 0, processing = 0, error = 0 }) {
+  const total = ready + processing + error || 1;
+  const bars = [
+    { value: ready,      color: 'from-emerald-400 to-emerald-500',  label: 'Ready',      count: ready },
+    { value: processing, color: 'from-primary-400 to-primary-500',  label: 'Processing', count: processing },
+    { value: error,      color: 'from-danger-400 to-danger-500',    label: 'Error',       count: error },
+  ];
   return (
-    <svg viewBox="0 0 120 120" className="w-28 h-28 -rotate-90">
-      {/* Background track */}
-      <circle cx={cx} cy={cy} r={r} fill="none"
-        stroke="#e2e8f0" strokeWidth={stroke} className="dark:stroke-surface-700" />
-      {segments.map((seg, i) => {
-        const dash = (seg.value / total) * circumference;
-        const gap  = circumference - dash;
-        const el = (
-          <circle key={i}
-            cx={cx} cy={cy} r={r} fill="none"
-            stroke={seg.color} strokeWidth={stroke}
-            strokeDasharray={`${dash} ${gap}`}
-            strokeDashoffset={-offset}
-            strokeLinecap="round"
-          />
-        );
-        offset += dash;
-        return el;
-      })}
-      {/* Centre label */}
-      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
-        fill="#64748b" fontSize="14" fontWeight="700"
-        transform={`rotate(90 ${cx} ${cy})`}>
-        {total}
-      </text>
-    </svg>
+    <div className="space-y-3">
+      {bars.map(b => (
+        <div key={b.label} className="flex items-center gap-3">
+          <span className="text-xs text-surface-500 dark:text-surface-400 w-20">{b.label}</span>
+          <div className="flex-1 h-2 rounded-full bg-surface-200/50 dark:bg-white/6 overflow-hidden">
+            <div
+              className={`h-full rounded-full bg-gradient-to-r ${b.color} transition-all duration-1000`}
+              style={{ width: `${(b.value / total) * 100}%` }}
+            />
+          </div>
+          <span className="text-xs font-semibold text-surface-700 dark:text-surface-300 w-6 text-right">{b.count}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Stat card
+function StatCard({ label, value, icon: Icon, gradient, sub, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="glass rounded-2xl p-5 text-left stat-card-accent hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 group glow-border w-full"
+      style={{ '--accent-from': gradient[0], '--accent-to': gradient[1] }}
+    >
+      <div className="flex items-start justify-between mb-4">
+        <div
+          className="w-10 h-10 rounded-xl flex items-center justify-center shadow-lg"
+          style={{ background: `linear-gradient(135deg, ${gradient[0]}, ${gradient[1]})` }}
+        >
+          <Icon className="w-5 h-5 text-white" />
+        </div>
+        <ChevronRight className="w-4 h-4 text-surface-300 dark:text-surface-600 group-hover:text-primary-400 transition-colors" />
+      </div>
+      <p className="text-3xl font-bold text-surface-900 dark:text-surface-100">{value}</p>
+      <p className="text-sm font-medium text-surface-600 dark:text-surface-400 mt-1">{label}</p>
+      {sub && <p className="text-xs text-surface-400 mt-0.5">{sub}</p>}
+    </button>
   );
 }
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  // useDocumentPolling gives us live data + auto-polls while any doc is processing
-  const { documents, loading: docsLoading } = useDocumentPolling();
-  const [stats, setStats]       = useState(null);
-  const [health, setHealth]     = useState(null);
+  const [stats, setStats]         = useState(null);
   const [analytics, setAnalytics] = useState(null);
-  const [loading, setLoading]   = useState(true);
+  const [docs, setDocs]           = useState([]);
+  const [loading, setLoading]     = useState(true);
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const [statsRes, healthRes, analyticsRes] = await Promise.all([
-          api.get('/api/documents/stats'),
-          api.get('/health'),
-          api.get('/api/chat/analytics'),
-        ]);
-        setStats(statsRes.data);
-        setHealth(healthRes.data);
-        setAnalytics(analyticsRes.data);
-      } catch (err) {
-        console.error('Dashboard load error:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, []);
+  const fetchAll = async () => {
+    try {
+      const [statsRes, analyticsRes, docsRes] = await Promise.all([
+        api.get('/api/documents/stats'),
+        api.get('/api/chat/analytics').catch(() => ({ data: null })),
+        api.get('/api/documents?status=ready').catch(() => ({ data: { documents: [] } })),
+      ]);
+      setStats(statsRes.data);
+      setAnalytics(analyticsRes.data);
+      setDocs(docsRes.data.documents?.slice(0, 5) ?? []);
+    } catch (err) {
+      console.error('Dashboard load error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  // Keep stats in sync when polling updates document list
-  useEffect(() => {
-    if (!documents.length && docsLoading) return;
-    setStats(prev => ({
-      ...prev,
-      total:      documents.length,
-      ready:      documents.filter(d => d.status === 'ready').length,
-      processing: documents.filter(d => d.status === 'processing').length,
-      error:      documents.filter(d => d.status === 'error').length,
-    }));
-  }, [documents, docsLoading]);
+  useEffect(() => { fetchAll(); }, []);
 
-  const totalDocs   = stats?.total      ?? 0;
-  const readyDocs   = stats?.ready      ?? 0;
-  const processDocs = stats?.processing ?? 0;
-  const recentDocs  = [...documents].slice(0, 5);
+  // Poll when documents are processing
+  useDocumentPolling(
+    stats?.processing > 0,
+    () => api.get('/api/documents/stats').then(r => setStats(r.data)),
+    4000,
+  );
 
-  const statCards = [
-    {
-      label: 'Total Documents',
-      value: totalDocs,
-      icon: Database,
-      color: 'from-primary-500 to-primary-600',
-      bg: 'bg-primary-500/10 dark:bg-primary-500/5',
-    },
-    {
-      label: 'Ready to Query',
-      value: readyDocs,
-      icon: CheckCircle,
-      color: 'from-accent-500 to-accent-600',
-      bg: 'bg-accent-500/10 dark:bg-accent-500/5',
-    },
-    {
-      label: 'Processing',
-      value: processDocs,
-      icon: Loader2,
-      color: 'from-blue-500 to-blue-600',
-      bg: 'bg-blue-500/10 dark:bg-blue-500/5',
-    },
-  ];
+  const skeleton = (
+    <div className="animate-pulse">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {[1,2,3,4].map(i => <div key={i} className="glass rounded-2xl h-36" />)}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="glass rounded-2xl h-64 col-span-2" />
+        <div className="glass rounded-2xl h-64" />
+      </div>
+    </div>
+  );
+
+  if (loading) return skeleton;
+
+  const totalDocs  = stats?.total ?? 0;
+  const readyDocs  = stats?.ready ?? 0;
+  const totalChunks = stats?.total_chunks ?? 0;
+  const totalSize  = formatBytes(stats?.total_size_bytes ?? 0);
+  const totalConvs = analytics?.total_conversations ?? 0;
+  const totalMsgs  = analytics?.total_messages ?? 0;
 
   return (
-    <div className="space-y-8 animate-fade-in">
+    <div className="space-y-6 animate-fade-in">
 
-      {/* Header */}
-      <header>
-        <h1 className="text-3xl font-bold text-surface-900 dark:text-surface-100">Dashboard</h1>
-        <p className="text-surface-500 mt-1">
-          {health
-            ? `${health.app} v${health.version} — ${health.environment}`
-            : 'Vehicle Intelligence Assistant'}
-        </p>
-      </header>
+      {/* ── Hero Header ─────────────────────────────────────────────── */}
+      <div className="relative overflow-hidden glass rounded-3xl p-6 md:p-8 border border-white/20 dark:border-white/6">
+        {/* Background gradient orbs */}
+        <div className="absolute -top-16 -right-16 w-64 h-64 rounded-full bg-primary-500/10 blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-12 -left-8 w-48 h-48 rounded-full bg-accent-500/10 blur-3xl pointer-events-none" />
 
-      {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-        {statCards.map((stat) => {
-          const Icon = stat.icon;
-          return (
-            <div
-              key={stat.label}
-              className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow"
-            >
-              <div className={`w-12 h-12 rounded-xl ${stat.bg} flex items-center justify-center flex-shrink-0`}>
-                <Icon className={`w-6 h-6 bg-gradient-to-br ${stat.color} bg-clip-text`}
-                  style={{ color: 'transparent', backgroundImage: `linear-gradient(to bottom right, var(--tw-gradient-from), var(--tw-gradient-to))`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}
-                />
+        <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-8 h-8 rounded-xl btn-gradient flex items-center justify-center">
+                <Zap className="w-4 h-4 text-white" />
               </div>
-              <div>
-                <p className="text-2xl font-bold text-surface-900 dark:text-surface-100">
-                  {loading ? (
-                    <span className="inline-block h-8 w-8 rounded bg-surface-200 dark:bg-surface-700 animate-pulse" />
-                  ) : stat.value}
-                </p>
-                <p className="text-sm text-surface-500 mt-0.5">{stat.label}</p>
-              </div>
+              <span className="text-xs font-semibold uppercase tracking-widest text-primary-400">
+                Vehicle Intelligence
+              </span>
             </div>
-          );
-        })}
-      </div>
-
-      {/* Quick Actions */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <button
-          onClick={() => navigate('/upload')}
-          className="group flex items-center justify-between p-5 bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 text-white rounded-2xl shadow-sm shadow-primary-500/20 transition-all"
-        >
+            <h1 className="text-3xl md:text-4xl font-extrabold text-surface-900 dark:text-white">
+              AI Dashboard
+            </h1>
+            <p className="text-surface-500 dark:text-surface-400 mt-1 text-sm max-w-lg">
+              Your fleet documents are indexed and ready. Ask questions about any vehicle in your library.
+            </p>
+          </div>
           <div className="flex items-center gap-3">
-            <UploadCloud className="w-6 h-6" />
-            <div className="text-left">
-              <p className="font-semibold">Upload Documents</p>
-              <p className="text-primary-200 text-sm">Add PDFs, CSVs, or text files</p>
-            </div>
-          </div>
-          <ArrowRight className="w-5 h-5 opacity-70 group-hover:translate-x-1 transition-transform" />
-        </button>
-
-        <button
-          onClick={() => navigate('/chat')}
-          className="group flex items-center justify-between p-5 bg-gradient-to-r from-accent-600 to-accent-700 hover:from-accent-700 hover:to-accent-800 text-white rounded-2xl shadow-sm shadow-accent-500/20 transition-all"
-        >
-          <div className="flex items-center gap-3">
-            <MessageSquare className="w-6 h-6" />
-            <div className="text-left">
-              <p className="font-semibold">Ask the Assistant</p>
-              <p className="text-accent-200 text-sm">
-                {readyDocs > 0 ? `${readyDocs} document${readyDocs > 1 ? 's' : ''} ready to query` : 'Upload documents to get started'}
-              </p>
-            </div>
-          </div>
-          <ArrowRight className="w-5 h-5 opacity-70 group-hover:translate-x-1 transition-transform" />
-        </button>
-      </div>
-
-      {/* Recent Documents */}
-      <section className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-surface-200 dark:border-surface-800 flex items-center justify-between">
-          <h2 className="font-semibold text-surface-900 dark:text-surface-100 flex items-center gap-2">
-            <FileText className="w-4 h-4 text-surface-400" />
-            Recent Documents
-          </h2>
-          {totalDocs > 5 && (
-            <button
-              onClick={() => navigate('/documents')}
-              className="text-sm text-primary-600 dark:text-primary-400 hover:underline"
-            >
-              View all {totalDocs}
-            </button>
-          )}
-        </div>
-
-        {loading ? (
-          <div className="divide-y divide-surface-100 dark:divide-surface-800">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="px-6 py-4 flex items-center gap-4">
-                <div className="w-8 h-8 rounded bg-surface-200 dark:bg-surface-800 animate-pulse" />
-                <div className="flex-1 space-y-2">
-                  <div className="h-4 w-48 bg-surface-200 dark:bg-surface-800 rounded animate-pulse" />
-                  <div className="h-3 w-24 bg-surface-200 dark:bg-surface-800 rounded animate-pulse" />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : recentDocs.length === 0 ? (
-          <div className="px-6 py-12 text-center">
-            <Cpu className="w-10 h-10 text-surface-300 dark:text-surface-600 mx-auto mb-3" />
-            <p className="text-surface-500 text-sm">No documents uploaded yet.</p>
             <button
               onClick={() => navigate('/upload')}
-              className="mt-4 text-sm text-primary-600 dark:text-primary-400 hover:underline"
+              className="flex items-center gap-2 px-4 py-2.5 glass rounded-xl border border-white/20 dark:border-white/8 text-sm font-medium text-surface-700 dark:text-surface-300 hover:text-surface-900 dark:hover:text-white transition-all"
             >
-              Upload your first document →
+              <UploadCloud className="w-4 h-4" />
+              Upload
+            </button>
+            <button
+              onClick={() => navigate('/chat')}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl btn-gradient text-sm font-semibold shadow-lg shadow-primary-500/30"
+            >
+              <MessageSquare className="w-4 h-4" />
+              Ask AI
+              <ArrowRight className="w-4 h-4" />
             </button>
           </div>
-        ) : (
-          <div className="divide-y divide-surface-100 dark:divide-surface-800">
-            {recentDocs.map(doc => (
-              <div key={doc.id} className="px-6 py-4 flex items-center gap-4 hover:bg-surface-50 dark:hover:bg-surface-800/30 transition-colors">
-                <div className="w-8 h-8 rounded-lg bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center flex-shrink-0">
-                  <FileText className="w-4 h-4 text-primary-600 dark:text-primary-400" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-surface-900 dark:text-surface-100 truncate">
-                    {doc.original_filename}
-                  </p>
-                  <p className="text-xs text-surface-400 mt-0.5">
-                    {formatBytes(doc.file_size)} · {new Date(doc.created_at).toLocaleDateString()}
-                    {doc.chunk_count > 0 && ` · ${doc.chunk_count} chunks`}
-                  </p>
-                </div>
-                <StatusBadge status={doc.status} />
-              </div>
-            ))}
+        </div>
+      </div>
+
+      {/* ── Stat Cards ──────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard
+          label="Total Documents"
+          value={totalDocs}
+          icon={FileText}
+          gradient={['#6366f1', '#4f46e5']}
+          sub={totalDocs === 0 ? 'Upload your first file' : `${readyDocs} ready`}
+          onClick={() => navigate('/documents')}
+        />
+        <StatCard
+          label="Vector Chunks"
+          value={totalChunks.toLocaleString()}
+          icon={Database}
+          gradient={['#06b6d4', '#0891b2']}
+          sub={totalSize + ' indexed'}
+          onClick={() => navigate('/documents')}
+        />
+        <StatCard
+          label="Conversations"
+          value={totalConvs}
+          icon={MessageSquare}
+          gradient={['#8b5cf6', '#6d28d9']}
+          sub={totalMsgs > 0 ? `${totalMsgs} messages` : 'Start chatting'}
+          onClick={() => navigate('/chat')}
+        />
+        <StatCard
+          label="AI Queries"
+          value={totalMsgs}
+          icon={BarChart2}
+          gradient={['#10b981', '#059669']}
+          sub="Powered by Gemini"
+          onClick={() => navigate('/chat')}
+        />
+      </div>
+
+      {/* ── Bottom Section ───────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        {/* Recent documents */}
+        <div className="lg:col-span-2 glass rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-surface-200/50 dark:border-white/6 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-primary-400" />
+              <h2 className="font-semibold text-surface-900 dark:text-surface-100 text-sm">
+                Indexed Documents
+              </h2>
+            </div>
+            <button
+              onClick={() => navigate('/documents')}
+              className="flex items-center gap-1 text-xs font-medium text-primary-400 hover:text-primary-300 transition-colors"
+            >
+              View all <ChevronRight className="w-3.5 h-3.5" />
+            </button>
           </div>
-        )}
-      </section>
 
-      {/* Analytics Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-
-        {/* Donut Chart — Document Status */}
-        <section className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
-          <h2 className="font-semibold text-surface-900 dark:text-surface-100 mb-5 flex items-center gap-2">
-            <BarChart2 className="w-4 h-4 text-surface-400" />
-            Document Status
-          </h2>
-          <div className="flex items-center gap-6">
-            <DonutChart
-              ready={analytics?.documents?.ready ?? stats?.ready ?? 0}
-              processing={analytics?.documents?.processing ?? stats?.processing ?? 0}
-              error={analytics?.documents?.error ?? 0}
-            />
-            <div className="space-y-2.5 text-sm flex-1">
-              {[
-                { label: 'Ready',      value: analytics?.documents?.ready ?? 0,      color: 'bg-emerald-500' },
-                { label: 'Processing', value: analytics?.documents?.processing ?? 0,  color: 'bg-indigo-500' },
-                { label: 'Error',      value: analytics?.documents?.error ?? 0,       color: 'bg-rose-500' },
-              ].map(item => (
-                <div key={item.label} className="flex items-center gap-2">
-                  <span className={`w-2.5 h-2.5 rounded-full ${item.color} flex-shrink-0`} />
-                  <span className="text-surface-600 dark:text-surface-400 flex-1">{item.label}</span>
-                  <span className="font-semibold text-surface-900 dark:text-surface-100">{item.value}</span>
+          {docs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-14 px-6 text-center">
+              <div className="w-12 h-12 rounded-2xl glass flex items-center justify-center mb-3">
+                <UploadCloud className="w-6 h-6 text-surface-400" />
+              </div>
+              <p className="text-sm text-surface-500 dark:text-surface-400">No ready documents yet</p>
+              <button
+                onClick={() => navigate('/upload')}
+                className="mt-3 text-sm font-medium text-primary-400 hover:text-primary-300 transition-colors flex items-center gap-1"
+              >
+                Upload a file <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <div className="divide-y divide-surface-200/40 dark:divide-white/4">
+              {docs.map(doc => (
+                <div key={doc.id} className="flex items-center gap-3 px-5 py-3.5 hover:bg-surface-50/50 dark:hover:bg-white/3 transition-colors">
+                  <div className="w-8 h-8 rounded-lg bg-primary-500/10 border border-primary-500/20 flex items-center justify-center flex-shrink-0">
+                    <FileText className="w-4 h-4 text-primary-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-surface-800 dark:text-surface-200 truncate">
+                      {doc.original_filename}
+                    </p>
+                    <p className="text-xs text-surface-400 mt-0.5">
+                      {doc.chunk_count} chunks · {formatBytes(doc.file_size)}
+                    </p>
+                  </div>
+                  <StatusBadge status={doc.status} />
                 </div>
               ))}
             </div>
-          </div>
-        </section>
-
-        {/* Satisfaction Card */}
-        <section className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
-          <h2 className="font-semibold text-surface-900 dark:text-surface-100 mb-5 flex items-center gap-2">
-            <ThumbsUp className="w-4 h-4 text-surface-400" />
-            Answer Feedback
-          </h2>
-
-          {loading ? (
-            <div className="h-24 rounded-xl bg-surface-100 dark:bg-surface-800 animate-pulse" />
-          ) : analytics?.total_queries === 0 ? (
-            <div className="text-center py-6">
-              <p className="text-surface-400 text-sm">No queries yet.</p>
-              <button onClick={() => navigate('/chat')} className="mt-2 text-sm text-primary-600 dark:text-primary-400 hover:underline">Ask the assistant →</button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {/* Satisfaction rate big number */}
-              <div className="flex items-end gap-3">
-                <p className={`text-5xl font-black ${
-                  analytics.satisfaction_rate == null ? 'text-surface-400'
-                  : analytics.satisfaction_rate >= 70 ? 'text-emerald-600 dark:text-emerald-400'
-                  : analytics.satisfaction_rate >= 40 ? 'text-amber-600 dark:text-amber-400'
-                  : 'text-rose-600 dark:text-rose-400'
-                }`}>
-                  {analytics.satisfaction_rate != null ? `${analytics.satisfaction_rate}%` : '—'}
-                </p>
-                <p className="text-surface-400 text-sm mb-1.5">satisfaction rate</p>
-              </div>
-
-              {/* Bar breakdown */}
-              <div className="space-y-2">
-                {[
-                  { label: 'Helpful',     value: analytics.thumbs_up,   total: analytics.total_queries, color: 'bg-emerald-500', icon: ThumbsUp },
-                  { label: 'Not helpful', value: analytics.thumbs_down,  total: analytics.total_queries, color: 'bg-rose-500',    icon: ThumbsDown },
-                  { label: 'No rating',  value: analytics.no_rating,    total: analytics.total_queries, color: 'bg-surface-300 dark:bg-surface-600', icon: null },
-                ].map(item => (
-                  <div key={item.label} className="flex items-center gap-2 text-xs">
-                    <span className="w-20 text-surface-500 flex-shrink-0">{item.label}</span>
-                    <div className="flex-1 h-2 bg-surface-100 dark:bg-surface-700 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full ${item.color} rounded-full transition-all duration-500`}
-                        style={{ width: item.total > 0 ? `${(item.value / item.total) * 100}%` : '0%' }}
-                      />
-                    </div>
-                    <span className="w-6 text-right font-semibold text-surface-700 dark:text-surface-300">{item.value}</span>
-                  </div>
-                ))}
-              </div>
-
-              <p className="text-xs text-surface-400">{analytics.total_queries} total answer{analytics.total_queries !== 1 ? 's' : ''}</p>
-            </div>
           )}
-        </section>
+        </div>
+
+        {/* Status Distribution */}
+        <div className="glass rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-surface-200/50 dark:border-white/6 flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-accent-400" />
+            <h2 className="font-semibold text-surface-900 dark:text-surface-100 text-sm">
+              Status Distribution
+            </h2>
+          </div>
+          <div className="p-5 space-y-6">
+            <MiniBarChart
+              ready={stats?.ready ?? 0}
+              processing={stats?.processing ?? 0}
+              error={stats?.error ?? 0}
+            />
+
+            {/* Quick actions */}
+            <div className="pt-4 border-t border-surface-200/40 dark:border-white/5 space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-surface-400 mb-3">Quick Actions</p>
+              {[
+                { label: 'Upload Document',    icon: UploadCloud, path: '/upload',    color: 'text-accent-400' },
+                { label: 'Browse Documents',   icon: FileText,    path: '/documents', color: 'text-primary-400' },
+                { label: 'Start New Chat',     icon: MessageSquare, path: '/chat',   color: 'text-emerald-400' },
+              ].map(a => (
+                <button
+                  key={a.path}
+                  onClick={() => navigate(a.path)}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-surface-100/50 dark:hover:bg-white/4 transition-all group"
+                >
+                  <a.icon className={`w-4 h-4 ${a.color}`} />
+                  <span className="text-sm text-surface-700 dark:text-surface-300 group-hover:text-surface-900 dark:group-hover:text-white transition-colors">
+                    {a.label}
+                  </span>
+                  <ChevronRight className="w-3.5 h-3.5 text-surface-300 dark:text-surface-600 ml-auto group-hover:text-primary-400 transition-colors" />
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
       </div>
 
-      {/* System Info */}
-      {health && (
-        <section className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
-          <h2 className="font-semibold text-surface-900 dark:text-surface-100 mb-4 flex items-center gap-2">
-            <Cpu className="w-4 h-4 text-surface-400" />
-            System Info
-          </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-            {[
-              { label: 'Version',     value: health.version },
-              { label: 'Environment', value: health.environment },
-              { label: 'Documents',   value: health.documents_count },
-              { label: 'Status',      value: health.status },
-            ].map(item => (
-              <div key={item.label}>
-                <p className="text-surface-400 text-xs uppercase tracking-wide">{item.label}</p>
-                <p className="font-medium text-surface-900 dark:text-surface-100 mt-1 capitalize">
-                  {item.value}
-                </p>
-              </div>
-            ))}
+      {/* ── Processing warning ───────────────────────────────────────── */}
+      {(stats?.processing ?? 0) > 0 && (
+        <div className="glass rounded-2xl px-5 py-4 border border-primary-500/20 flex items-center gap-3">
+          <Loader2 className="w-5 h-5 text-primary-400 animate-spin flex-shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-surface-800 dark:text-surface-200">
+              {stats.processing} document{stats.processing !== 1 ? 's' : ''} being processed
+            </p>
+            <p className="text-xs text-surface-400 mt-0.5">
+              This page updates automatically. Parsing → Chunking → Embedding in progress.
+            </p>
           </div>
-        </section>
+        </div>
+      )}
+
+      {/* ── Error warning ────────────────────────────────────────────── */}
+      {(stats?.error ?? 0) > 0 && (
+        <div className="glass rounded-2xl px-5 py-4 border border-danger-500/20 flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 text-danger-400 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-surface-800 dark:text-surface-200">
+              {stats.error} document{stats.error !== 1 ? 's' : ''} failed to process
+            </p>
+            <p className="text-xs text-surface-400 mt-0.5">
+              Go to Documents to view errors and re-upload if needed.
+            </p>
+          </div>
+          <button
+            onClick={() => navigate('/documents')}
+            className="ml-auto flex-shrink-0 flex items-center gap-1 text-xs text-danger-400 hover:text-danger-300 font-medium transition-colors"
+          >
+            View <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
       )}
     </div>
   );

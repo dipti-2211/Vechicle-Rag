@@ -66,21 +66,41 @@ class DocumentParser:
     @staticmethod
     def _parse_csv(path: Path) -> str:
         """Extract text from a CSV by converting rows to readable text."""
-        # We convert it to a markdown table or a structured string
-        df = pd.read_csv(path)
-        return df.to_string(index=False)
+        for encoding in ('utf-8', 'utf-8-sig', 'latin-1', 'cp1252'):
+            try:
+                df = pd.read_csv(path, encoding=encoding)
+                return df.to_string(index=False)
+            except (UnicodeDecodeError, Exception):
+                continue
+        raise RuntimeError(f"Could not read CSV file with any supported encoding: {path}")
 
     @staticmethod
     def _parse_excel(path: Path) -> str:
-        """Extract text from an Excel file (first sheet or all sheets)."""
-        df = pd.read_excel(path)
-        return df.to_string(index=False)
+        """Extract text from an Excel file (all sheets concatenated)."""
+        try:
+            all_sheets = pd.read_excel(path, sheet_name=None)  # dict of {sheet_name: df}
+            parts = []
+            for sheet_name, df in all_sheets.items():
+                parts.append(f"=== Sheet: {sheet_name} ===")
+                parts.append(df.to_string(index=False))
+            return "\n\n".join(parts)
+        except Exception:
+            # Fallback: try reading just the first sheet
+            df = pd.read_excel(path)
+            return df.to_string(index=False)
 
     @staticmethod
     def _parse_txt(path: Path) -> str:
-        """Read plain text."""
-        with open(path, 'r', encoding='utf-8') as f:
-            return f.read()
+        """Read plain text, trying common encodings."""
+        for encoding in ('utf-8', 'utf-8-sig', 'latin-1', 'cp1252'):
+            try:
+                with open(path, 'r', encoding=encoding) as f:
+                    return f.read()
+            except (UnicodeDecodeError, LookupError):
+                continue
+        # Last resort: read as bytes and decode with errors='replace'
+        with open(path, 'rb') as f:
+            return f.read().decode('utf-8', errors='replace')
 
     @staticmethod
     def _parse_docx(path: Path) -> str:

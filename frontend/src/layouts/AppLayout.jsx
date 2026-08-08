@@ -1,39 +1,42 @@
-import { useState } from 'react';
-import { Outlet } from 'react-router-dom';
-import { Menu } from 'lucide-react';
-import { Sidebar } from '../components/layout/Sidebar';
+import { Outlet, useLocation } from 'react-router-dom';
+import { TopNav } from '../components/layout/TopNav';
+import { HistoryDrawer } from '../components/layout/HistoryDrawer';
 
+/**
+ * AppLayout — wraps every page with:
+ *   - Fixed glassmorphism TopNav
+ *   - Full-width scrollable main content
+ *   - Floating HistoryDrawer (bottom-left)
+ */
 export function AppLayout() {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const location = useLocation();
+  // The Chat page handles its own layout (full-height flex)
+  const isChatPage = location.pathname === '/chat';
 
   return (
-    <div className="min-h-screen bg-surface-50 dark:bg-surface-950 flex transition-colors duration-300">
-      {/* Sidebar Component */}
-      <Sidebar mobileOpen={mobileMenuOpen} setMobileOpen={setMobileMenuOpen} />
+    <div className="min-h-screen transition-colors duration-300">
+      {/* Fixed top navigation bar */}
+      <TopNav />
 
-      {/* Main Content Wrapper */}
-      <div className="flex-1 flex flex-col min-w-0 lg:pl-64 transition-all duration-300">
-        
-        {/* Mobile Header */}
-        <header className="lg:hidden h-16 flex items-center px-4 border-b border-surface-200 dark:border-surface-800 bg-surface-50/80 dark:bg-surface-900/80 backdrop-blur-md sticky top-0 z-30">
-          <button
-            onClick={() => setMobileMenuOpen(true)}
-            className="p-2 -ml-2 rounded-md text-surface-600 dark:text-surface-400 hover:bg-surface-200 dark:hover:bg-surface-800 focus:outline-none"
-          >
-            <Menu className="w-6 h-6" />
-          </button>
-          <span className="ml-3 font-semibold text-surface-900 dark:text-surface-100">
-            Vehicle Intelligence
-          </span>
-        </header>
-
-        {/* Page Content */}
-        <main className="flex-1 overflow-auto">
-          <div className="h-full p-4 md:p-6 max-w-7xl mx-auto w-full animate-fade-in">
+      {/* Main content — offset by the nav height (64px) */}
+      <main
+        className={`${
+          isChatPage
+            ? 'h-screen pt-16 overflow-hidden'
+            : 'min-h-screen pt-16 pb-16 md:pb-0'
+        }`}
+      >
+        {isChatPage ? (
+          <Outlet />
+        ) : (
+          <div className="h-full px-4 md:px-6 py-6 max-w-7xl mx-auto w-full animate-fade-in">
             <Outlet />
           </div>
-        </main>
-      </div>
+        )}
+      </main>
+
+      {/* Floating history drawer — appears on all pages */}
+      <HistoryDrawer />
     </div>
   );
 }

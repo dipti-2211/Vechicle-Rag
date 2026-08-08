@@ -18,11 +18,22 @@ createRoot(document.getElementById('root')).render(
             toastOptions={{
               duration: 4000,
               style: {
-                borderRadius: '12px',
+                borderRadius: '14px',
                 padding: '12px 16px',
-                fontSize: '14px',
-                background: 'var(--color-surface-900)',
-                color: 'var(--color-surface-100)',
+                fontSize: '13px',
+                fontFamily: 'Inter, sans-serif',
+                fontWeight: '500',
+                background: 'rgba(15, 23, 42, 0.9)',
+                color: '#f1f5f9',
+                border: '1px solid rgba(255,255,255,0.08)',
+                backdropFilter: 'blur(16px)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+              },
+              success: {
+                iconTheme: { primary: '#10b981', secondary: 'rgba(15,23,42,0.9)' },
+              },
+              error: {
+                iconTheme: { primary: '#f87171', secondary: 'rgba(15,23,42,0.9)' },
               },
             }}
           />

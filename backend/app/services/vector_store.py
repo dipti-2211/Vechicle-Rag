@@ -35,7 +35,7 @@ class VectorStore:
         logger.info("Loading embedding model all-MiniLM-L6-v2...")
         self.embedding_model = SentenceTransformer(
             "all-MiniLM-L6-v2",
-            local_files_only=True,   # Use cached model; never make network calls
+            # Allow download if not cached — falls back to network on first run
         )
 
         # 2. Initialize a persistent ChromaDB client (data survives restarts).

@@ -1,48 +1,30 @@
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, ArrowLeft, Home } from 'lucide-react';
+import { Home, Zap } from 'lucide-react';
 
 export default function NotFound() {
   const navigate = useNavigate();
-
   return (
-    <div className="min-h-screen bg-surface-50 dark:bg-surface-950 flex items-center justify-center p-6">
-      <div className="text-center max-w-md animate-fade-in">
-        {/* Big number */}
-        <div className="relative mb-8">
-          <p className="text-[8rem] font-black text-surface-200 dark:text-surface-800 leading-none select-none">
-            404
-          </p>
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center shadow-xl shadow-primary-500/30">
-              <AlertCircle className="w-10 h-10 text-white" />
-            </div>
-          </div>
-        </div>
-
-        <h1 className="text-2xl font-bold text-surface-900 dark:text-surface-100 mb-2">
-          Page Not Found
-        </h1>
-        <p className="text-surface-500 dark:text-surface-400 mb-8">
-          The page you're looking for doesn't exist or has been moved.
-        </p>
-
-        <div className="flex items-center justify-center gap-3">
-          <button
-            onClick={() => navigate(-1)}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-surface-200 dark:border-surface-700 text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800 font-medium text-sm transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Go Back
-          </button>
-          <button
-            onClick={() => navigate('/dashboard')}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary-600 hover:bg-primary-700 text-white font-medium text-sm transition-colors shadow-sm shadow-primary-500/20"
-          >
-            <Home className="w-4 h-4" />
-            Dashboard
-          </button>
-        </div>
+    <div className="min-h-screen flex flex-col items-center justify-center text-center px-6 bg-surface-950"
+         style={{
+           backgroundImage:
+             'radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99,102,241,0.15) 0%, transparent 60%)',
+         }}
+    >
+      <div className="w-24 h-24 rounded-3xl btn-gradient flex items-center justify-center mb-8 shadow-2xl shadow-primary-500/40">
+        <Zap className="w-12 h-12 text-white" />
       </div>
+      <h1 className="text-8xl font-black gradient-text mb-4">404</h1>
+      <h2 className="text-2xl font-bold text-white mb-3">Page Not Found</h2>
+      <p className="text-surface-400 max-w-md mb-8 text-sm leading-relaxed">
+        This page doesn't exist in the Vehicle Intelligence system. It may have been moved or the URL is incorrect.
+      </p>
+      <button
+        onClick={() => navigate('/dashboard')}
+        className="flex items-center gap-2 px-6 py-3 rounded-2xl btn-gradient text-sm font-semibold shadow-lg shadow-primary-500/30"
+      >
+        <Home className="w-4 h-4" />
+        Back to Dashboard
+      </button>
     </div>
   );
 }
