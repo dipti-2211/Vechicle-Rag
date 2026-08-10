@@ -31,15 +31,15 @@ export function TopNav() {
 
           {/* Brand */}
           <button
-            onClick={() => navigate('/dashboard')}
+            onClick={() => navigate('/')}
             className="flex items-center gap-2.5 flex-shrink-0 group"
           >
             <div className="w-8 h-8 rounded-xl btn-gradient flex items-center justify-center shadow-lg shadow-primary-500/30 group-hover:shadow-primary-500/50 transition-all">
               <Zap className="w-4 h-4 text-white" />
             </div>
             <span className="font-bold text-sm tracking-tight hidden sm:block">
-              <span className="gradient-text">Vehicle</span>
-              <span className="text-surface-700 dark:text-surface-300"> Intelligence</span>
+              <span className="gradient-text">Auron</span>
+              <span className="text-surface-700 dark:text-surface-300"> · Vehicle AI</span>
             </span>
           </button>
 
