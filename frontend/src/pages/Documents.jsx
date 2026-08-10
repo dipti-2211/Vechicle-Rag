@@ -3,9 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import {
   FileText, UploadCloud, Trash2, Search, CheckCircle,
   AlertCircle, Loader2, Clock, RefreshCw, X, Eye,
-  MessageSquare, Database, ChevronRight, FileSpreadsheet,
+  MessageSquare, Database, FileSpreadsheet,
   FileType, Files,
 } from 'lucide-react';
+
 import toast from 'react-hot-toast';
 import api from '../api/axios';
 import { useDocumentPolling } from '../hooks/useDocumentPolling';

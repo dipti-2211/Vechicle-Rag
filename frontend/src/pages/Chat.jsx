@@ -192,7 +192,10 @@ export default function Chat() {
       setSidebarOpen(true);
       window.history.replaceState({}, '');
     }
+  // selectConversation is stable (useCallback) — safe to include
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
+
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -212,12 +215,13 @@ export default function Chat() {
     }
   }, []);
 
-  const selectConversation = (convId) => {
+  const selectConversation = useCallback((convId) => {
     setActiveConvId(convId);
     loadMessages(convId);
     setSidebarOpen(false);
     inputRef.current?.focus();
-  };
+  }, [loadMessages]);
+
 
   const newConversation = () => {
     setActiveConvId(null);
@@ -409,10 +413,13 @@ export default function Chat() {
             </div>
           ) : (
             conversations.map(conv => (
-              <button
+              <div
                 key={conv.id}
+                role="button"
+                tabIndex={0}
                 onClick={() => selectConversation(conv.id)}
-                className={`w-full text-left px-3 py-3 flex items-center gap-2 rounded-xl group transition-all duration-150 mb-0.5 ${
+                onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && selectConversation(conv.id)}
+                className={`w-full text-left px-3 py-3 flex items-center gap-2 rounded-xl group transition-all duration-150 mb-0.5 cursor-pointer ${
                   activeConvId === conv.id ? 'nav-active' : 'hover:bg-surface-100/50 dark:hover:bg-white/4'
                 }`}
               >
@@ -451,8 +458,9 @@ export default function Chat() {
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
-              </button>
+              </div>
             ))
+
           )}
         </div>
       </aside>

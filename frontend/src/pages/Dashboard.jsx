@@ -4,8 +4,9 @@ import {
   FileText, MessageSquare, UploadCloud, CheckCircle,
   Loader2, AlertCircle, ArrowRight, Database,
   BarChart2, Zap, TrendingUp, ChevronRight,
-  BookOpen, Clock, Star,
+  BookOpen,
 } from 'lucide-react';
+
 import api from '../api/axios';
 import { useDocumentPolling } from '../hooks/useDocumentPolling';
 

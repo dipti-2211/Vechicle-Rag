@@ -4,11 +4,12 @@ Vehicle Intelligence Assistant — RAG Service
 Orchestrates the full Retrieval-Augmented Generation pipeline:
 1. Retrieve top-K relevant chunks from ChromaDB (VectorStore)
 2. Build a grounded prompt from retrieved context
-3. Call Gemini (gemini-2.0-flash) for answer generation
+3. Call Gemini (model configured via GEMINI_LLM_MODEL in .env) for answer generation
 4. Return the answer with source citations for the frontend
 
 This service is called by the POST /api/chat/ask endpoint.
 """
+
 
 import asyncio
 import json
