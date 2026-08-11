@@ -4,7 +4,7 @@ import {
   FileText, MessageSquare, UploadCloud, CheckCircle,
   Loader2, AlertCircle, ArrowRight, Database,
   BarChart2, Zap, TrendingUp, ChevronRight,
-  BookOpen,
+  BookOpen, Terminal,
 } from 'lucide-react';
 
 import api from '../api/axios';
@@ -39,46 +39,56 @@ function MiniBarChart({ ready = 0, processing = 0, error = 0 }) {
   const bars = [
     { value: ready,      color: 'from-emerald-400 to-emerald-500',  label: 'Ready',      count: ready },
     { value: processing, color: 'from-primary-400 to-primary-500',  label: 'Processing', count: processing },
-    { value: error,      color: 'from-danger-400 to-danger-500',    label: 'Error',       count: error },
+    { value: error,      color: 'from-danger-400 to-danger-500',    label: 'Error',      count: error },
   ];
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {bars.map(b => (
-        <div key={b.label} className="flex items-center gap-3">
-          <span className="text-xs text-surface-500 dark:text-surface-400 w-20">{b.label}</span>
-          <div className="flex-1 h-2 rounded-full bg-surface-200/50 dark:bg-white/6 overflow-hidden">
+        <div key={b.label} className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-neutral-400">{b.label}</span>
+            <span className="text-xs font-semibold text-white/70">{b.count}</span>
+          </div>
+          <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
             <div
               className={`h-full rounded-full bg-gradient-to-r ${b.color} transition-all duration-1000`}
               style={{ width: `${(b.value / total) * 100}%` }}
             />
           </div>
-          <span className="text-xs font-semibold text-surface-700 dark:text-surface-300 w-6 text-right">{b.count}</span>
         </div>
       ))}
     </div>
   );
 }
 
-// Stat card
+// Bento stat card — reference design language
 function StatCard({ label, value, icon: Icon, gradient, sub, onClick }) {
   return (
     <button
       onClick={onClick}
-      className="glass rounded-2xl p-5 text-left stat-card-accent hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 group glow-border w-full"
-      style={{ '--accent-from': gradient[0], '--accent-to': gradient[1] }}
+      className="bento-card flex flex-col min-h-[160px] text-left group w-full"
+      id={`stat-card-${label.toLowerCase().replace(/\s+/g, '-')}`}
     >
-      <div className="flex items-start justify-between mb-4">
-        <div
-          className="w-10 h-10 rounded-xl flex items-center justify-center shadow-lg"
-          style={{ background: `linear-gradient(135deg, ${gradient[0]}, ${gradient[1]})` }}
-        >
-          <Icon className="w-5 h-5 text-white" />
+      {/* Visual area */}
+      <div className="flex flex-1 flex-col justify-between p-5">
+        <div className="flex items-start justify-between">
+          <div
+            className="w-9 h-9 rounded-lg flex items-center justify-center shadow-lg"
+            style={{ background: `linear-gradient(135deg, ${gradient[0]}, ${gradient[1]})` }}
+          >
+            <Icon className="w-4 h-4 text-white" />
+          </div>
+          <ChevronRight className="w-3.5 h-3.5 text-white/20 group-hover:text-white/50 transition-colors" />
         </div>
-        <ChevronRight className="w-4 h-4 text-surface-300 dark:text-surface-600 group-hover:text-primary-400 transition-colors" />
+        <div>
+          <p className="text-2xl font-semibold text-white tracking-tight">{value}</p>
+          {sub && <p className="text-[11px] text-neutral-500 mt-0.5">{sub}</p>}
+        </div>
       </div>
-      <p className="text-3xl font-bold text-surface-900 dark:text-surface-100">{value}</p>
-      <p className="text-sm font-medium text-surface-600 dark:text-surface-400 mt-1">{label}</p>
-      {sub && <p className="text-xs text-surface-400 mt-0.5">{sub}</p>}
+      {/* Footer */}
+      <div className="bento-footer">
+        <p className="text-xs font-medium text-neutral-400">{label}</p>
+      </div>
     </button>
   );
 }
@@ -116,74 +126,75 @@ export default function Dashboard() {
     4000,
   );
 
-  const skeleton = (
-    <div className="animate-pulse">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        {[1,2,3,4].map(i => <div key={i} className="glass rounded-2xl h-36" />)}
+  // Skeleton
+  if (loading) return (
+    <div className="space-y-4 animate-pulse">
+      <div className="bento-card h-36" />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {[1,2,3,4].map(i => <div key={i} className="bento-card h-40" />)}
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="glass rounded-2xl h-64 col-span-2" />
-        <div className="glass rounded-2xl h-64" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="bento-card h-72 lg:col-span-2" />
+        <div className="bento-card h-72" />
       </div>
     </div>
   );
 
-  if (loading) return skeleton;
-
-  const totalDocs  = stats?.total ?? 0;
-  const readyDocs  = stats?.ready ?? 0;
+  const totalDocs   = stats?.total ?? 0;
+  const readyDocs   = stats?.ready ?? 0;
   const totalChunks = stats?.total_chunks ?? 0;
-  const totalSize  = formatBytes(stats?.total_size_bytes ?? 0);
-  const totalConvs = analytics?.total_conversations ?? 0;
-  const totalMsgs  = analytics?.total_messages ?? 0;
+  const totalSize   = formatBytes(stats?.total_size_bytes ?? 0);
+  const totalConvs  = analytics?.total_conversations ?? 0;
+  const totalMsgs   = analytics?.total_messages ?? 0;
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-4 animate-fade-in">
 
-      {/* ── Hero Header ─────────────────────────────────────────────── */}
-      <div className="relative overflow-hidden glass rounded-3xl p-6 md:p-8 border border-white/20 dark:border-white/6">
-        {/* Background gradient orbs */}
-        <div className="absolute -top-16 -right-16 w-64 h-64 rounded-full bg-primary-500/10 blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-12 -left-8 w-48 h-48 rounded-full bg-accent-500/10 blur-3xl pointer-events-none" />
+      {/* Hero Banner */}
+      <div className="bento-card relative overflow-hidden">
+        <div className="absolute -top-20 -right-20 w-72 h-72 rounded-full bg-indigo-500/5 blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-16 -left-10 w-56 h-56 rounded-full bg-cyan-500/5 blur-3xl pointer-events-none" />
 
-        <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 rounded-xl btn-gradient flex items-center justify-center">
-                <Zap className="w-4 h-4 text-white" />
-              </div>
-              <span className="text-xs font-semibold uppercase tracking-widest text-primary-400">
-                Vehicle Intelligence
-              </span>
-            </div>
-            <h1 className="text-3xl md:text-4xl font-extrabold text-surface-900 dark:text-white">
-              AI Dashboard
-            </h1>
-            <p className="text-surface-500 dark:text-surface-400 mt-1 text-sm max-w-lg">
-              Your fleet documents are indexed and ready. Ask questions about any vehicle in your library.
-            </p>
+        <div className="relative px-6 py-6 md:px-8 md:py-7">
+          <div className="mb-4 inline-flex items-center rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-[11px] font-medium uppercase tracking-widest text-neutral-500">
+            <Zap className="w-3 h-3 mr-1.5 text-indigo-400" />
+            Vehicle Intelligence
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate('/upload')}
-              className="flex items-center gap-2 px-4 py-2.5 glass rounded-xl border border-white/20 dark:border-white/8 text-sm font-medium text-surface-700 dark:text-surface-300 hover:text-surface-900 dark:hover:text-white transition-all"
-            >
-              <UploadCloud className="w-4 h-4" />
-              Upload
-            </button>
-            <button
-              onClick={() => navigate('/chat')}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl btn-gradient text-sm font-semibold shadow-lg shadow-primary-500/30"
-            >
-              <MessageSquare className="w-4 h-4" />
-              Ask AI
-              <ArrowRight className="w-4 h-4" />
-            </button>
+
+          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-5">
+            <div>
+              <h1 className="text-3xl md:text-4xl font-semibold tracking-tight text-white mb-1.5">
+                AI Dashboard
+              </h1>
+              <p className="text-sm text-neutral-500 max-w-md leading-relaxed">
+                Fleet documents indexed and ready. Ask questions about any vehicle in your library.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2.5">
+              <button
+                id="hero-upload-btn"
+                onClick={() => navigate('/upload')}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-white/[0.08] bg-white/[0.03] text-sm font-medium text-neutral-300 hover:text-white hover:border-white/[0.15] hover:bg-white/[0.06] transition-all"
+              >
+                <UploadCloud className="w-4 h-4" />
+                Upload
+              </button>
+              <button
+                id="hero-askai-btn"
+                onClick={() => navigate('/chat')}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-lg btn-gradient text-sm font-semibold shadow-lg shadow-indigo-500/20"
+              >
+                <MessageSquare className="w-4 h-4" />
+                Ask AI
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* ── Stat Cards ──────────────────────────────────────────────── */}
+      {/* Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="Total Documents"
@@ -219,51 +230,58 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* ── Bottom Section ───────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Main Content — Bento 3-col */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
-        {/* Recent documents */}
-        <div className="lg:col-span-2 glass rounded-2xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-surface-200/50 dark:border-white/6 flex items-center justify-between">
+        {/* Indexed Documents — wide card */}
+        <div className="bento-card flex flex-col lg:col-span-2">
+          {/* Header row */}
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.04]">
             <div className="flex items-center gap-2">
-              <BookOpen className="w-4 h-4 text-primary-400" />
-              <h2 className="font-semibold text-surface-900 dark:text-surface-100 text-sm">
-                Indexed Documents
-              </h2>
+              <div className="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
+                <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
+              </div>
+              <h2 className="text-sm font-medium text-white">Indexed Documents</h2>
             </div>
             <button
+              id="view-all-docs-btn"
               onClick={() => navigate('/documents')}
-              className="flex items-center gap-1 text-xs font-medium text-primary-400 hover:text-primary-300 transition-colors"
+              className="flex items-center gap-1 text-xs font-medium text-neutral-500 hover:text-white transition-colors"
             >
               View all <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
 
+          {/* Document list */}
           {docs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-14 px-6 text-center">
-              <div className="w-12 h-12 rounded-2xl glass flex items-center justify-center mb-3">
-                <UploadCloud className="w-6 h-6 text-surface-400" />
+            <div className="flex flex-col items-center justify-center py-16 px-6 text-center flex-1">
+              <div className="w-12 h-12 rounded-xl border border-white/[0.08] bg-white/[0.02] flex items-center justify-center mb-3">
+                <UploadCloud className="w-5 h-5 text-neutral-600" />
               </div>
-              <p className="text-sm text-surface-500 dark:text-surface-400">No ready documents yet</p>
+              <p className="text-sm text-neutral-500">No ready documents yet</p>
               <button
+                id="upload-link-empty"
                 onClick={() => navigate('/upload')}
-                className="mt-3 text-sm font-medium text-primary-400 hover:text-primary-300 transition-colors flex items-center gap-1"
+                className="mt-3 text-sm font-medium text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1"
               >
                 Upload a file <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
           ) : (
-            <div className="divide-y divide-surface-200/40 dark:divide-white/4">
-              {docs.map(doc => (
-                <div key={doc.id} className="flex items-center gap-3 px-5 py-3.5 hover:bg-surface-50/50 dark:hover:bg-white/3 transition-colors">
-                  <div className="w-8 h-8 rounded-lg bg-primary-500/10 border border-primary-500/20 flex items-center justify-center flex-shrink-0">
-                    <FileText className="w-4 h-4 text-primary-400" />
+            <div className="divide-y divide-white/[0.04] flex-1">
+              {docs.map((doc, idx) => (
+                <div key={doc.id} className="flex items-center gap-3 px-5 py-3.5 hover:bg-white/[0.02] transition-colors group">
+                  <span className="text-[11px] font-mono text-neutral-700 w-5 text-right flex-shrink-0">
+                    {String(idx + 1).padStart(2, '0')}
+                  </span>
+                  <div className="w-7 h-7 rounded-md border border-white/[0.06] bg-white/[0.03] flex items-center justify-center flex-shrink-0">
+                    <FileText className="w-3.5 h-3.5 text-indigo-400/70" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-surface-800 dark:text-surface-200 truncate">
+                    <p className="text-sm font-medium text-neutral-200 truncate group-hover:text-white transition-colors">
                       {doc.original_filename}
                     </p>
-                    <p className="text-xs text-surface-400 mt-0.5">
+                    <p className="text-[11px] text-neutral-600 mt-0.5 font-mono">
                       {doc.chunk_count} chunks · {formatBytes(doc.file_size)}
                     </p>
                   </div>
@@ -272,84 +290,124 @@ export default function Dashboard() {
               ))}
             </div>
           )}
+
+          {/* Footer */}
+          <div className="bento-footer flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Terminal className="w-3.5 h-3.5 text-neutral-600" />
+              <span className="text-[11px] font-mono text-neutral-600">
+                {readyDocs} / {totalDocs} ready
+              </span>
+            </div>
+            <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          </div>
         </div>
 
-        {/* Status Distribution */}
-        <div className="glass rounded-2xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-surface-200/50 dark:border-white/6 flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-accent-400" />
-            <h2 className="font-semibold text-surface-900 dark:text-surface-100 text-sm">
-              Status Distribution
-            </h2>
+        {/* Status Distribution + Quick Actions */}
+        <div className="bento-card flex flex-col">
+          {/* Header row */}
+          <div className="flex items-center gap-2 px-5 py-3.5 border-b border-white/[0.04]">
+            <div className="w-7 h-7 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
+              <TrendingUp className="w-3.5 h-3.5 text-cyan-400" />
+            </div>
+            <h2 className="text-sm font-medium text-white">Status Distribution</h2>
           </div>
-          <div className="p-5 space-y-6">
+
+          <div className="p-5 flex-1 flex flex-col">
             <MiniBarChart
               ready={stats?.ready ?? 0}
               processing={stats?.processing ?? 0}
               error={stats?.error ?? 0}
             />
 
-            {/* Quick actions */}
-            <div className="pt-4 border-t border-surface-200/40 dark:border-white/5 space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-widest text-surface-400 mb-3">Quick Actions</p>
+            <div className="my-5 border-t border-white/[0.04]" />
+
+            {/* Quick Actions */}
+            <div className="space-y-1 flex-1">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-neutral-700 mb-3">
+                Quick Actions
+              </p>
               {[
-                { label: 'Upload Document',    icon: UploadCloud, path: '/upload',    color: 'text-accent-400' },
-                { label: 'Browse Documents',   icon: FileText,    path: '/documents', color: 'text-primary-400' },
-                { label: 'Start New Chat',     icon: MessageSquare, path: '/chat',   color: 'text-emerald-400' },
+                { label: 'Upload Document',  icon: UploadCloud,   path: '/upload',    color: 'text-cyan-400',    bg: 'bg-cyan-500/10 border-cyan-500/20'     },
+                { label: 'Browse Documents', icon: FileText,      path: '/documents', color: 'text-indigo-400',  bg: 'bg-indigo-500/10 border-indigo-500/20' },
+                { label: 'Start New Chat',   icon: MessageSquare, path: '/chat',      color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20' },
               ].map(a => (
                 <button
                   key={a.path}
+                  id={`quick-action-${a.path.replace('/', '')}`}
                   onClick={() => navigate(a.path)}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-surface-100/50 dark:hover:bg-white/4 transition-all group"
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border border-transparent hover:border-white/[0.06] hover:bg-white/[0.03] transition-all group"
                 >
-                  <a.icon className={`w-4 h-4 ${a.color}`} />
-                  <span className="text-sm text-surface-700 dark:text-surface-300 group-hover:text-surface-900 dark:group-hover:text-white transition-colors">
+                  <div className={`w-6 h-6 rounded-md border flex items-center justify-center flex-shrink-0 ${a.bg}`}>
+                    <a.icon className={`w-3 h-3 ${a.color}`} />
+                  </div>
+                  <span className="text-sm text-neutral-400 group-hover:text-neutral-200 transition-colors">
                     {a.label}
                   </span>
-                  <ChevronRight className="w-3.5 h-3.5 text-surface-300 dark:text-surface-600 ml-auto group-hover:text-primary-400 transition-colors" />
+                  <ChevronRight className="w-3.5 h-3.5 text-neutral-700 ml-auto group-hover:text-neutral-400 transition-colors" />
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Footer */}
+          <div className="bento-footer">
+            <p className="text-[11px] font-mono text-neutral-600">
+              {stats?.total ?? 0} total · {stats?.error ?? 0} errors
+            </p>
           </div>
         </div>
 
       </div>
 
-      {/* ── Processing warning ───────────────────────────────────────── */}
+      {/* Processing warning */}
       {(stats?.processing ?? 0) > 0 && (
-        <div className="glass rounded-2xl px-5 py-4 border border-primary-500/20 flex items-center gap-3">
-          <Loader2 className="w-5 h-5 text-primary-400 animate-spin flex-shrink-0" />
-          <div>
-            <p className="text-sm font-semibold text-surface-800 dark:text-surface-200">
+        <div
+          className="bento-card px-5 py-4 flex items-center gap-3"
+          style={{ borderColor: 'rgba(99,102,241,0.25)' }}
+        >
+          <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center flex-shrink-0">
+            <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-neutral-200">
               {stats.processing} document{stats.processing !== 1 ? 's' : ''} being processed
             </p>
-            <p className="text-xs text-surface-400 mt-0.5">
-              This page updates automatically. Parsing → Chunking → Embedding in progress.
+            <p className="text-xs text-neutral-600 mt-0.5">
+              Parsing → Chunking → Embedding in progress. This page updates automatically.
             </p>
           </div>
+          <div className="h-2 w-2 rounded-full bg-indigo-400 ring-pulse flex-shrink-0" />
         </div>
       )}
 
-      {/* ── Error warning ────────────────────────────────────────────── */}
+      {/* Error warning */}
       {(stats?.error ?? 0) > 0 && (
-        <div className="glass rounded-2xl px-5 py-4 border border-danger-500/20 flex items-center gap-3">
-          <AlertCircle className="w-5 h-5 text-danger-400 flex-shrink-0" />
-          <div>
-            <p className="text-sm font-semibold text-surface-800 dark:text-surface-200">
+        <div
+          className="bento-card px-5 py-4 flex items-center gap-3"
+          style={{ borderColor: 'rgba(239,68,68,0.2)' }}
+        >
+          <div className="w-8 h-8 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-center flex-shrink-0">
+            <AlertCircle className="w-4 h-4 text-red-400" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-neutral-200">
               {stats.error} document{stats.error !== 1 ? 's' : ''} failed to process
             </p>
-            <p className="text-xs text-surface-400 mt-0.5">
+            <p className="text-xs text-neutral-600 mt-0.5">
               Go to Documents to view errors and re-upload if needed.
             </p>
           </div>
           <button
+            id="view-errors-btn"
             onClick={() => navigate('/documents')}
-            className="ml-auto flex-shrink-0 flex items-center gap-1 text-xs text-danger-400 hover:text-danger-300 font-medium transition-colors"
+            className="flex-shrink-0 flex items-center gap-1 text-xs text-red-400 hover:text-red-300 font-medium transition-colors"
           >
             View <ChevronRight className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
+
     </div>
   );
 }

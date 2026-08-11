@@ -36,8 +36,8 @@ export function TopNav() {
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 h-16">
-      {/* Glass background */}
-      <div className="h-full glass border-b border-white/10 dark:border-white/5">
+      {/* Dark glass background matching bento reference */}
+      <div className="h-full bg-[#050505]/80 dark:bg-[#050505]/90 backdrop-blur-xl border-b border-white/[0.08] transition-colors">
         <div className="h-full max-w-screen-2xl mx-auto px-4 md:px-6 flex items-center justify-between gap-4">
 
           {/* Brand — clicking navigates home */}
@@ -68,7 +68,7 @@ export function TopNav() {
             {/* Theme toggle */}
             <button
               onClick={toggleTheme}
-              className="p-2.5 rounded-xl text-surface-500 dark:text-surface-400 hover:text-surface-900 dark:hover:text-surface-100 hover:bg-surface-100/60 dark:hover:bg-white/5 transition-all"
+              className="p-2.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-white/[0.06] border border-transparent hover:border-white/[0.08] transition-all"
               title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
             >
               {theme === 'dark'
@@ -80,7 +80,7 @@ export function TopNav() {
             {/* Chat CTA */}
             <button
               onClick={() => navigate('/chat')}
-              className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-xl btn-gradient text-sm font-semibold shadow-lg shadow-primary-500/25"
+              className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-lg btn-gradient text-sm font-semibold shadow-lg shadow-indigo-500/20"
             >
               <MessageSquare className="w-4 h-4" />
               Ask AI
@@ -90,7 +90,7 @@ export function TopNav() {
       </div>
 
       {/* Mobile bottom nav */}
-      <div className="fixed bottom-0 left-0 right-0 md:hidden glass border-t border-white/10 dark:border-white/5 z-50">
+      <div className="fixed bottom-0 left-0 right-0 md:hidden bg-[#050505]/90 backdrop-blur-xl border-t border-white/[0.08] z-50">
         <div className="flex items-center justify-around h-14 px-2">
           {NAV_ITEMS.map(({ id, path, label, icon: Icon }) => {
             const isActive = path === '/'
@@ -102,8 +102,8 @@ export function TopNav() {
                 onClick={() => navigate(path)}
                 className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl transition-all ${
                   isActive
-                    ? 'text-primary-500 dark:text-primary-400'
-                    : 'text-surface-400 dark:text-surface-500'
+                    ? 'text-indigo-400'
+                    : 'text-neutral-600'
                 }`}
               >
                 <Icon className="w-5 h-5" />
