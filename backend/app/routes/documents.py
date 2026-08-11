@@ -400,8 +400,7 @@ async def preview_document(document_id: str) -> DocumentPreviewResponse:
         raise HTTPException(status_code=404, detail=f"Document not found: {document_id}")
 
     try:
-        parser = DocumentParser()
-        text = parser.parse(raw["file_path"], raw["file_type"])
+        text = DocumentParser.parse(raw["file_path"], raw["file_type"])
         total_chars = len(text)
         truncated   = total_chars > PREVIEW_CHARS
         preview     = text[:PREVIEW_CHARS].strip()

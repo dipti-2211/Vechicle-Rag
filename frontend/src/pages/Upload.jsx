@@ -157,9 +157,7 @@ export default function Upload() {
           ));
         }, 300);
 
-        await api.post('/api/documents', form, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-        });
+        await api.post('/api/documents', form);
 
         clearInterval(progressTimer);
         setFiles(prev => prev.map(f => f.id === item.id ? { ...f, status: 'done', progress: 100 } : f));

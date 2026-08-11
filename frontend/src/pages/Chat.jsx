@@ -345,12 +345,14 @@ export default function Chat() {
           ];
         });
       } catch (fallbackErr) {
+        // Both streaming and fallback failed — restore the question and remove temp messages
         setMessages(prev => prev.filter(m => m.id !== tempUserMsgId && m.id !== tempAsstMsgId));
-        const detail = fallbackErr.response?.data?.detail ?? 'Failed to get a response.';
+        const detail = fallbackErr.response?.data?.detail ?? fallbackErr.message ?? 'Failed to get a response.';
         toast.error(detail);
         setQuestion(q);
       }
     } finally {
+      // Clean up any lingering streaming state (e.g. if stream died mid-token)
       setMessages(prev => prev.map(m => m.isStreaming ? { ...m, isStreaming: false } : m));
       setIsSending(false);
       inputRef.current?.focus();

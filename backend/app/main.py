@@ -120,10 +120,14 @@ def create_app() -> FastAPI:
     )
 
     # ── CORS Middleware ──────────────────────────────────────────────
+    # In development: allow all origins so any Vite port (5173, 5174…) works.
+    # In production: restrict to the configured allow-list for security.
+    _cors_origins  = ["*"] if not settings.is_production else settings.cors_origins
+    _cors_creds    = False  # Must be False when allow_origins=["*"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_credentials=True,
+        allow_origins=_cors_origins,
+        allow_credentials=_cors_creds,
         allow_methods=["*"],
         allow_headers=["*"],
     )

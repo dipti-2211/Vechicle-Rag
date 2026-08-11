@@ -322,10 +322,10 @@ class ChatService:
         row = await self.db.fetch_one(
             """
             SELECT
-                COUNT(*) FILTER (WHERE role = 'assistant')              AS total_queries,
-                COUNT(*) FILTER (WHERE role = 'assistant' AND rating =  1) AS thumbs_up,
-                COUNT(*) FILTER (WHERE role = 'assistant' AND rating = -1) AS thumbs_down,
-                COUNT(*) FILTER (WHERE role = 'assistant' AND rating IS NULL) AS no_rating
+                SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END)                       AS total_queries,
+                SUM(CASE WHEN role = 'assistant' AND rating =  1 THEN 1 ELSE 0 END)        AS thumbs_up,
+                SUM(CASE WHEN role = 'assistant' AND rating = -1 THEN 1 ELSE 0 END)        AS thumbs_down,
+                SUM(CASE WHEN role = 'assistant' AND rating IS NULL THEN 1 ELSE 0 END)     AS no_rating
             FROM messages
             """
         )

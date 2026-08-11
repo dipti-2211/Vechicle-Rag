@@ -191,12 +191,30 @@ class VectorStore:
         if n_results == 0:
             return []
 
-        results = self.collection.query(
-            query_embeddings=[query_embedding],
-            n_results=n_results,
-            where=where_filter,
-            include=["documents", "metadatas", "distances"],
-        )
+        try:
+            results = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=n_results,
+                where=where_filter,
+                include=["documents", "metadatas", "distances"],
+            )
+        except Exception as query_err:
+            # ChromaDB raises when n_results > number of matching documents for a where_filter.
+            # Retry with n_results=1 (minimum valid value) to safely recover.
+            logger.warning(
+                "ChromaDB query failed (n_results=%d, filter=%s): %s. Retrying with n_results=1.",
+                n_results, where_filter, query_err,
+            )
+            try:
+                results = self.collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=1,
+                    where=where_filter,
+                    include=["documents", "metadatas", "distances"],
+                )
+            except Exception as retry_err:
+                logger.error("ChromaDB retry also failed: %s", retry_err)
+                return []
 
         formatted: List[Dict[str, Any]] = []
         if results and results["documents"] and results["documents"][0]:
