@@ -1,37 +1,40 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
-  Send, Plus, Trash2, Download, MessageSquare, Bot, User,
+  Plus, Trash2, Download, MessageSquare, Bot, User,
   BookOpen, Loader2, AlertCircle, X, Filter, FileText,
-  ThumbsUp, ThumbsDown, Zap, Sparkles,
+  ThumbsUp, ThumbsDown, ChevronLeft, Sparkles, Zap,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import toast from 'react-hot-toast';
 import api from '../api/axios';
+import { PromptBox } from '../components/ui/chatgpt-prompt-input';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sub-components
+// SourceCitation
 // ─────────────────────────────────────────────────────────────────────────────
-
 function SourceCitation({ source }) {
   const pct = source.relevance_score != null ? Math.round(source.relevance_score * 100) : null;
   return (
-    <span className="source-chip">
-      <BookOpen className="w-3 h-3 flex-shrink-0" />
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-white/[0.06] border border-white/[0.08] text-neutral-400">
+      <BookOpen className="w-2.5 h-2.5 flex-shrink-0" />
       {source.document_name}
       {pct != null && <span className="opacity-60">· {pct}%</span>}
     </span>
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TypingDots
+// ─────────────────────────────────────────────────────────────────────────────
 function TypingDots() {
   return (
     <div className="flex gap-1.5 items-center h-5 px-1">
       {[0,1,2].map(i => (
         <span
           key={i}
-          className="typing-dot w-2 h-2 rounded-full bg-primary-400"
+          className="typing-dot w-2 h-2 rounded-full bg-neutral-500"
           style={{ animationDelay: `${i * 0.2}s` }}
         />
       ))}
@@ -39,6 +42,9 @@ function TypingDots() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MessageBubble
+// ─────────────────────────────────────────────────────────────────────────────
 function MessageBubble({ message, onRate }) {
   const isUser      = message.role === 'user';
   const isStreaming = message.isStreaming ?? false;
@@ -63,28 +69,33 @@ function MessageBubble({ message, onRate }) {
   return (
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} items-end group animate-slide-up`}>
       {/* Avatar */}
-      <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center shadow-md ${
+      <div className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center ${
         isUser
-          ? 'bg-gradient-to-br from-primary-500 to-primary-700'
-          : 'bg-gradient-to-br from-accent-500 to-primary-600'
+          ? 'bg-white/10 border border-white/20'
+          : 'bg-white/[0.06] border border-white/[0.1]'
       }`}>
-        {isUser ? <User className="w-4 h-4 text-white" /> : <Bot className="w-4 h-4 text-white" />}
+        {isUser
+          ? <User className="w-3.5 h-3.5 text-white/70" />
+          : <Bot className="w-3.5 h-3.5 text-neutral-400" />
+        }
       </div>
 
-      <div className={`max-w-[78%] space-y-2 ${isUser ? 'items-end' : 'items-start'} flex flex-col`}>
+      <div className={`max-w-[78%] space-y-1.5 ${isUser ? 'items-end' : 'items-start'} flex flex-col`}>
         {/* Bubble */}
-        <div className={`px-4 py-3 text-sm leading-relaxed shadow-sm ${
-          isUser ? 'bubble-user' : 'bubble-assistant'
+        <div className={`px-4 py-3 text-sm leading-relaxed rounded-2xl ${
+          isUser
+            ? 'bg-white text-black rounded-br-sm font-medium'
+            : 'bg-[#111111] border border-white/[0.08] text-neutral-200 rounded-bl-sm'
         }`}>
           {isUser ? (
             <p className="whitespace-pre-wrap">{message.content}</p>
           ) : isStreaming && !message.content ? (
             <TypingDots />
           ) : (
-            <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-li:my-0.5 prose-headings:my-2">
+            <div className="prose prose-sm prose-invert max-w-none prose-p:my-1 prose-li:my-0.5 prose-headings:my-2 prose-headings:text-white prose-a:text-indigo-400">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
               {isStreaming && (
-                <span className="inline-block w-0.5 h-4 bg-primary-400 ml-0.5 align-middle animate-pulse" />
+                <span className="inline-block w-0.5 h-4 bg-white/60 ml-0.5 align-middle animate-pulse" />
               )}
             </div>
           )}
@@ -99,9 +110,9 @@ function MessageBubble({ message, onRate }) {
           </div>
         )}
 
-        {/* Feedback + timestamp row */}
+        {/* Feedback + timestamp */}
         <div className="flex items-center gap-3 px-1">
-          <p className="text-xs text-surface-400">
+          <p className="text-[11px] text-neutral-700">
             {message.created_at
               ? new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
               : ''}
@@ -114,11 +125,11 @@ function MessageBubble({ message, onRate }) {
                 title="Helpful"
                 className={`p-1 rounded-md transition-all ${
                   rating === 1
-                    ? 'text-emerald-500 bg-emerald-500/10'
-                    : 'text-surface-400 hover:text-emerald-500 hover:bg-emerald-500/10'
+                    ? 'text-emerald-400 bg-emerald-500/10'
+                    : 'text-neutral-600 hover:text-emerald-400 hover:bg-emerald-500/10'
                 }`}
               >
-                <ThumbsUp className="w-3.5 h-3.5" fill={rating === 1 ? 'currentColor' : 'none'} />
+                <ThumbsUp className="w-3 h-3" fill={rating === 1 ? 'currentColor' : 'none'} />
               </button>
               <button
                 onClick={() => handleRate(-1)}
@@ -126,11 +137,11 @@ function MessageBubble({ message, onRate }) {
                 title="Not helpful"
                 className={`p-1 rounded-md transition-all ${
                   rating === -1
-                    ? 'text-danger-400 bg-danger-500/10'
-                    : 'text-surface-400 hover:text-danger-400 hover:bg-danger-500/10'
+                    ? 'text-red-400 bg-red-500/10'
+                    : 'text-neutral-600 hover:text-red-400 hover:bg-red-500/10'
                 }`}
               >
-                <ThumbsDown className="w-3.5 h-3.5" fill={rating === -1 ? 'currentColor' : 'none'} />
+                <ThumbsDown className="w-3 h-3" fill={rating === -1 ? 'currentColor' : 'none'} />
               </button>
             </div>
           )}
@@ -184,7 +195,6 @@ export default function Chat() {
     init();
   }, []);
 
-  // Open conversation from location state (from HistoryDrawer)
   useEffect(() => {
     const convId = location.state?.conversationId;
     if (convId) {
@@ -192,10 +202,8 @@ export default function Chat() {
       setSidebarOpen(true);
       window.history.replaceState({}, '');
     }
-  // selectConversation is stable (useCallback) — safe to include
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
-
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -222,7 +230,6 @@ export default function Chat() {
     inputRef.current?.focus();
   }, [loadMessages]);
 
-
   const newConversation = () => {
     setActiveConvId(null);
     setMessages([]);
@@ -243,9 +250,9 @@ export default function Chat() {
     }
   };
 
-  // ── Send ───────────────────────────────────────────────────────────
-  const sendMessage = async () => {
-    const q = question.trim();
+  // ── Send ──────────────────────────────────────────────────
+  const sendMessage = async (directMsg) => {
+    const q = (directMsg ?? question).trim();
     if (!q || isSending) return;
 
     setQuestion('');
@@ -345,73 +352,70 @@ export default function Chat() {
           ];
         });
       } catch (fallbackErr) {
-        // Both streaming and fallback failed — restore the question and remove temp messages
         setMessages(prev => prev.filter(m => m.id !== tempUserMsgId && m.id !== tempAsstMsgId));
         const detail = fallbackErr.response?.data?.detail ?? fallbackErr.message ?? 'Failed to get a response.';
         toast.error(detail);
         setQuestion(q);
       }
     } finally {
-      // Clean up any lingering streaming state (e.g. if stream died mid-token)
       setMessages(prev => prev.map(m => m.isStreaming ? { ...m, isStreaming: false } : m));
       setIsSending(false);
       inputRef.current?.focus();
     }
   };
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-  };
+  const activeConvTitle = activeConvId
+    ? conversations.find(c => c.id === activeConvId)?.title ?? 'Chat'
+    : 'New Conversation';
 
   // ── Render ─────────────────────────────────────────────────────────
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex h-full bg-[#050505] overflow-hidden">
 
-      {/* ── Conversation Sidebar ─────────────────────────────────────── */}
-      {/* Backdrop on mobile */}
+      {/* ── Sidebar Backdrop ─────────────────────────────────────────── */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-20 lg:hidden"
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-20 lg:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
+      {/* ── Conversation Sidebar ──────────────────────────────────────── */}
       <aside className={`
-        flex-shrink-0 flex flex-col
-        glass-strong border-r border-white/8 dark:border-white/5
+        flex-shrink-0 flex flex-col bg-[#0a0a0a] border-r border-white/[0.06]
         fixed lg:relative top-16 lg:top-0 h-[calc(100%-4rem)] lg:h-full z-30
         transition-all duration-300 ease-out
         ${sidebarOpen ? 'w-72 translate-x-0' : 'w-72 -translate-x-full lg:w-0 lg:overflow-hidden'}
       `}>
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3.5 border-b border-white/8 flex-shrink-0">
+        {/* Sidebar header */}
+        <div className="flex items-center justify-between px-4 py-4 border-b border-white/[0.06] flex-shrink-0">
           <div className="flex items-center gap-2">
-            <MessageSquare className="w-4 h-4 text-primary-400" />
-            <h2 className="text-sm font-semibold text-surface-800 dark:text-surface-100">Conversations</h2>
+            <MessageSquare className="w-4 h-4 text-neutral-500" />
+            <h2 className="text-sm font-medium text-neutral-300">Conversations</h2>
           </div>
           <div className="flex items-center gap-1.5">
             <button
               onClick={newConversation}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg btn-gradient text-xs font-semibold"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/[0.06] border border-white/[0.08] text-xs font-medium text-neutral-300 hover:text-white hover:bg-white/[0.1] transition-all"
             >
-              <Plus className="w-3.5 h-3.5" /> New
+              <Plus className="w-3 h-3" /> New
             </button>
-            <button onClick={() => setSidebarOpen(false)} className="p-1.5 rounded-lg text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 lg:hidden">
+            <button onClick={() => setSidebarOpen(false)} className="p-1.5 rounded-lg text-neutral-600 hover:text-neutral-300 lg:hidden">
               <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
         {/* Conversation list */}
-        <div className="flex-1 overflow-y-auto py-1.5 px-1.5">
+        <div className="flex-1 overflow-y-auto py-2 px-2">
           {loadingConvs ? (
-            <div className="space-y-2 p-2">
-              {[1,2,3].map(i => <div key={i} className="h-12 rounded-xl bg-surface-100/50 dark:bg-white/4 animate-pulse" />)}
+            <div className="space-y-1.5 p-2">
+              {[1,2,3].map(i => <div key={i} className="h-10 rounded-lg bg-white/[0.04] animate-pulse" />)}
             </div>
           ) : conversations.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-              <MessageSquare className="w-8 h-8 text-surface-300 dark:text-surface-600 mb-2" />
-              <p className="text-xs text-surface-400">No conversations yet</p>
+              <MessageSquare className="w-6 h-6 text-neutral-700 mb-2" />
+              <p className="text-xs text-neutral-600">No conversations yet</p>
             </div>
           ) : (
             conversations.map(conv => (
@@ -421,14 +425,14 @@ export default function Chat() {
                 tabIndex={0}
                 onClick={() => selectConversation(conv.id)}
                 onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && selectConversation(conv.id)}
-                className={`w-full text-left px-3 py-3 flex items-center gap-2 rounded-xl group transition-all duration-150 mb-0.5 cursor-pointer ${
-                  activeConvId === conv.id ? 'nav-active' : 'hover:bg-surface-100/50 dark:hover:bg-white/4'
+                className={`w-full text-left px-3 py-2.5 flex items-center gap-2 rounded-lg group transition-all duration-150 mb-0.5 cursor-pointer ${
+                  activeConvId === conv.id
+                    ? 'bg-white/[0.08] border border-white/[0.1] text-white'
+                    : 'text-neutral-500 hover:bg-white/[0.04] hover:text-neutral-300'
                 }`}
               >
-                <MessageSquare className={`w-3.5 h-3.5 flex-shrink-0 ${activeConvId === conv.id ? 'text-primary-400' : 'text-surface-400'}`} />
-                <span className={`text-sm truncate flex-1 ${activeConvId === conv.id ? 'text-primary-300 font-medium' : 'text-surface-600 dark:text-surface-300'}`}>
-                  {conv.title}
-                </span>
+                <MessageSquare className="w-3.5 h-3.5 flex-shrink-0 opacity-60" />
+                <span className="text-xs truncate flex-1">{conv.title}</span>
                 <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     onClick={async (e) => {
@@ -448,57 +452,62 @@ export default function Chat() {
                       } catch { toast.error('Export failed.'); }
                     }}
                     title="Export"
-                    className="p-1 rounded text-surface-400 hover:text-primary-400 hover:bg-primary-500/10 transition-all"
+                    className="p-1 rounded text-neutral-600 hover:text-indigo-400 transition-all"
                   >
                     <Download className="w-3.5 h-3.5" />
                   </button>
                   <button
                     onClick={e => deleteConversation(conv.id, e)}
                     title="Delete"
-                    className="p-1 rounded text-surface-400 hover:text-danger-400 hover:bg-danger-500/10 transition-all"
+                    className="p-1 rounded text-neutral-600 hover:text-red-400 transition-all"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
               </div>
             ))
-
           )}
         </div>
       </aside>
 
-      {/* ── Main Chat Area ────────────────────────────────────────────── */}
+      {/* ── Main Chat Area ─────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col min-w-0 h-full">
 
-        {/* Chat Header */}
-        <div className="h-14 px-4 glass border-b border-white/8 dark:border-white/5 flex items-center gap-3 flex-shrink-0">
+        {/* Chat top bar */}
+        <div className="h-14 px-4 bg-[#050505] border-b border-white/[0.06] flex items-center gap-3 flex-shrink-0">
+          {/* Sidebar toggle */}
           <button
             onClick={() => setSidebarOpen(o => !o)}
-            className="p-2 rounded-xl text-surface-400 hover:text-surface-700 dark:hover:text-surface-200 hover:bg-surface-100/50 dark:hover:bg-white/5 transition-all"
+            className="p-2 rounded-lg text-neutral-600 hover:text-neutral-300 hover:bg-white/[0.06] transition-all"
             title="Toggle conversations"
           >
-            <MessageSquare className="w-4.5 h-4.5" />
+            <ChevronLeft className={`w-4 h-4 transition-transform ${sidebarOpen ? '' : 'rotate-180'}`} />
           </button>
 
+          {/* Conversation title */}
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-accent-500 to-primary-600 flex items-center justify-center flex-shrink-0">
-              <Zap className="w-3.5 h-3.5 text-white" />
+            <div className="w-6 h-6 rounded-md bg-white/[0.06] border border-white/[0.08] flex items-center justify-center flex-shrink-0">
+              <Zap className="w-3 h-3 text-neutral-400" />
             </div>
-            <span className="font-semibold text-surface-900 dark:text-surface-100 text-sm truncate">
-              {activeConvId
-                ? conversations.find(c => c.id === activeConvId)?.title ?? 'Chat'
-                : 'New Conversation'}
-            </span>
+            <span className="text-sm font-medium text-neutral-300 truncate">{activeConvTitle}</span>
           </div>
+
+          {/* New conversation button */}
+          <button
+            onClick={newConversation}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-neutral-500 hover:text-white border border-transparent hover:border-white/[0.08] hover:bg-white/[0.04] transition-all"
+          >
+            <Plus className="w-3.5 h-3.5" /> New
+          </button>
 
           {/* Document scope selector */}
           <div className="relative flex-shrink-0">
             <button
               onClick={() => setScopeOpen(o => !o)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
                 selectedDocIds.length > 0
-                  ? 'nav-active'
-                  : 'glass border-white/10 dark:border-white/6 text-surface-500 dark:text-surface-400 hover:text-surface-800 dark:hover:text-surface-200'
+                  ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400'
+                  : 'border-white/[0.08] text-neutral-500 hover:text-neutral-300 hover:border-white/[0.15]'
               }`}
             >
               <Filter className="w-3.5 h-3.5" />
@@ -506,19 +515,16 @@ export default function Chat() {
             </button>
 
             {scopeOpen && readyDocs.length > 0 && (
-              <div className="absolute right-0 top-full mt-2 w-72 glass-strong rounded-2xl shadow-2xl z-50 overflow-hidden border border-white/10 dark:border-white/6 animate-scale-in">
-                <div className="px-4 py-3 border-b border-surface-200/40 dark:border-white/6 flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Scope Search To</span>
+              <div className="absolute right-0 top-full mt-2 w-72 bg-[#111111] border border-white/[0.1] rounded-xl shadow-2xl z-50 overflow-hidden animate-scale-in">
+                <div className="px-4 py-3 border-b border-white/[0.06] flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Scope Search To</span>
                   {selectedDocIds.length > 0 && (
-                    <button onClick={() => setSelectedDocIds([])} className="text-xs text-primary-400 hover:text-primary-300 font-medium">Clear</button>
+                    <button onClick={() => setSelectedDocIds([])} className="text-xs text-indigo-400 hover:text-indigo-300 font-medium">Clear</button>
                   )}
                 </div>
                 <div className="max-h-56 overflow-y-auto py-1">
                   {readyDocs.map(doc => (
-                    <label
-                      key={doc.id}
-                      className="flex items-center gap-3 px-4 py-2.5 hover:bg-surface-50/40 dark:hover:bg-white/4 cursor-pointer transition-colors"
-                    >
+                    <label key={doc.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.04] cursor-pointer transition-colors">
                       <input
                         type="checkbox"
                         checked={selectedDocIds.includes(doc.id)}
@@ -526,21 +532,18 @@ export default function Chat() {
                           if (e.target.checked) setSelectedDocIds(prev => [...prev, doc.id]);
                           else setSelectedDocIds(prev => prev.filter(id => id !== doc.id));
                         }}
-                        className="w-4 h-4 rounded border-surface-300 text-primary-600"
+                        className="w-4 h-4 rounded border-white/20 bg-transparent accent-indigo-500"
                       />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm text-surface-800 dark:text-surface-200 truncate">{doc.original_filename}</p>
-                        <p className="text-xs text-surface-400">{doc.chunk_count} chunks</p>
+                        <p className="text-sm text-neutral-200 truncate">{doc.original_filename}</p>
+                        <p className="text-xs text-neutral-600">{doc.chunk_count} chunks</p>
                       </div>
-                      <FileText className="w-3.5 h-3.5 text-surface-300 dark:text-surface-600 flex-shrink-0" />
+                      <FileText className="w-3.5 h-3.5 text-neutral-700 flex-shrink-0" />
                     </label>
                   ))}
                 </div>
-                <div className="px-4 py-2.5 border-t border-surface-200/40 dark:border-white/6">
-                  <button
-                    onClick={() => setScopeOpen(false)}
-                    className="w-full py-1.5 text-xs font-semibold btn-gradient rounded-xl"
-                  >
+                <div className="px-4 py-2.5 border-t border-white/[0.06]">
+                  <button onClick={() => setScopeOpen(false)} className="w-full py-2 text-xs font-semibold bg-white text-black rounded-lg hover:bg-white/90 transition-all">
                     Apply
                   </button>
                 </div>
@@ -550,69 +553,59 @@ export default function Chat() {
           </div>
 
           {docCount === 0 && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-warning-500/10 border border-warning-500/20 text-warning-500 text-xs font-medium">
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-medium">
               <AlertCircle className="w-3.5 h-3.5" />
               No docs
             </div>
           )}
         </div>
 
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5">
+        {/* ── Messages area ──────────────────────────────────────────────── */}
+        <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6 space-y-6 bg-[#050505]">
           {loadingMsgs ? (
             <div className="flex items-center justify-center h-full">
-              <Loader2 className="w-6 h-6 animate-spin text-primary-400" />
+              <Loader2 className="w-5 h-5 animate-spin text-neutral-600" />
             </div>
           ) : messages.length === 0 ? (
-            /* Welcome state */
-            <div className="flex flex-col items-center justify-center h-full text-center space-y-6 animate-fade-in">
+
+            /* ── Empty / Welcome state ──────────────────────────────────── */
+            <div className="flex flex-col items-center justify-center h-full text-center space-y-8 animate-fade-in max-w-lg mx-auto">
+
+              {/* Icon */}
               <div className="relative">
-                <div className="w-24 h-24 rounded-3xl btn-gradient flex items-center justify-center shadow-2xl shadow-primary-500/40">
-                  <Sparkles className="w-12 h-12 text-white" />
+                <div className="w-16 h-16 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center shadow-2xl">
+                  <Sparkles className="w-8 h-8 text-white/60" />
                 </div>
-                <div className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-gradient-to-br from-accent-400 to-accent-600 flex items-center justify-center shadow-lg">
-                  <Bot className="w-4 h-4 text-white" />
+                <div className="absolute -bottom-1.5 -right-1.5 w-6 h-6 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center">
+                  <Zap className="w-3 h-3 text-indigo-400" />
                 </div>
               </div>
 
-              <div>
-                <h2 className="text-2xl font-extrabold text-surface-900 dark:text-white">
-                  Vehicle Intelligence
+              {/* Heading */}
+              <div className="space-y-2">
+                <h2 className="text-2xl font-semibold tracking-tight text-white">
+                  How Can I Assist you today?
                 </h2>
-                <p className="text-surface-500 dark:text-surface-400 mt-2 max-w-sm text-sm leading-relaxed">
+                <p className="text-sm text-neutral-500 leading-relaxed max-w-sm">
                   Ask me anything about your uploaded vehicle documents — manuals, maintenance logs, or inspection reports.
                 </p>
               </div>
 
-              {docCount === 0 ? (
-                <div className="glass rounded-2xl p-4 border border-warning-500/20 text-sm text-warning-600 dark:text-warning-400 max-w-sm flex items-start gap-3">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                  <div>
+              {/* No docs warning */}
+              {docCount === 0 && (
+                <div className="bento-card px-4 py-3 flex items-start gap-3 max-w-sm w-full text-left"
+                  style={{ borderColor: 'rgba(245,158,11,0.2)' }}>
+                  <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                  <div className="text-sm text-neutral-400">
                     No documents indexed yet.{' '}
-                    <button onClick={() => navigate('/upload')} className="underline font-semibold text-warning-500">
+                    <button onClick={() => navigate('/upload')} className="text-amber-400 hover:text-amber-300 underline underline-offset-2 font-medium transition-colors">
                       Upload one first.
                     </button>
                   </div>
                 </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-w-lg w-full">
-                  {[
-                    'What is the recommended oil change interval?',
-                    'What are the tire pressure specifications?',
-                    'When should brake pads be replaced?',
-                    'What type of coolant is required?',
-                  ].map(sample => (
-                    <button
-                      key={sample}
-                      onClick={() => { setQuestion(sample); inputRef.current?.focus(); }}
-                      className="prompt-chip"
-                    >
-                      {sample}
-                    </button>
-                  ))}
-                </div>
               )}
             </div>
+
           ) : (
             <>
               {messages.map(msg => (
@@ -620,10 +613,10 @@ export default function Chat() {
               ))}
               {isSending && !messages.some(m => m.isStreaming) && (
                 <div className="flex gap-3 items-end animate-slide-up">
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-accent-500 to-primary-600 flex items-center justify-center">
-                    <Bot className="w-4 h-4 text-white" />
+                  <div className="w-7 h-7 rounded-full bg-white/[0.06] border border-white/[0.1] flex items-center justify-center">
+                    <Bot className="w-3.5 h-3.5 text-neutral-400" />
                   </div>
-                  <div className="bubble-assistant px-4 py-3">
+                  <div className="bg-[#111111] border border-white/[0.08] px-4 py-3 rounded-2xl rounded-bl-sm">
                     <TypingDots />
                   </div>
                 </div>
@@ -633,46 +626,24 @@ export default function Chat() {
           <div ref={bottomRef} />
         </div>
 
-        {/* Input Bar */}
-        <div className="px-4 pb-4 pt-3 border-t border-white/8 dark:border-white/5 glass flex-shrink-0">
-          <div className="flex gap-3 items-end max-w-4xl mx-auto">
-            <div className="flex-1 relative">
-              <textarea
-                ref={inputRef}
-                value={question}
-                onChange={e => setQuestion(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={docCount > 0 ? 'Ask a question about your vehicles…' : 'Upload documents first…'}
-                disabled={isSending}
-                rows={1}
-                className="w-full px-4 py-3 pr-10 rounded-2xl border border-surface-200/60 dark:border-white/8 bg-surface-100/60 dark:bg-white/5 text-surface-900 dark:text-surface-100 placeholder-surface-400 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/60 focus:border-transparent transition-all leading-snug disabled:opacity-60 backdrop-blur-sm"
-                style={{ minHeight: '48px', maxHeight: '140px' }}
-                onInput={e => {
-                  e.target.style.height = 'auto';
-                  e.target.style.height = Math.min(e.target.scrollHeight, 140) + 'px';
-                }}
-              />
-              {question && (
-                <button
-                  onClick={() => setQuestion('')}
-                  className="absolute right-3 top-3.5 text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-            <button
-              onClick={sendMessage}
-              disabled={!question.trim() || isSending}
-              className="flex-shrink-0 w-12 h-12 flex items-center justify-center rounded-2xl btn-gradient shadow-lg shadow-primary-500/30 transition-all"
-            >
-              {isSending ? <Loader2 className="w-5 h-5 text-white animate-spin" /> : <Send className="w-5 h-5 text-white" />}
-            </button>
+        {/* ── PromptBox input ─────────────────────────────────────────────── */}
+        <div className="px-4 md:px-8 pb-4 pt-3 bg-[#050505] border-t border-white/[0.06] flex-shrink-0">
+          <div className="max-w-3xl mx-auto">
+            <PromptBox
+              ref={inputRef}
+              externalValue={question}
+              onExternalChange={setQuestion}
+              onSend={(msg) => sendMessage(msg)}
+              isSending={isSending}
+              placeholder={docCount > 0 ? 'Ask a question about your vehicles…' : 'Upload documents first to start chatting…'}
+              disabled={isSending}
+            />
+            <p className="text-[11px] text-neutral-700 text-center mt-2 select-none">
+              Enter to send · Shift+Enter for new line
+            </p>
           </div>
-          <p className="text-xs text-surface-400 text-center mt-2">
-            Enter to send · Shift+Enter for new line
-          </p>
         </div>
+
       </div>
     </div>
   );

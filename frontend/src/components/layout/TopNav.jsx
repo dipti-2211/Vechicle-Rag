@@ -45,12 +45,11 @@ export function TopNav() {
             onClick={() => navigate('/')}
             className="flex items-center gap-2.5 flex-shrink-0 group"
           >
-            <div className="w-8 h-8 rounded-xl btn-gradient flex items-center justify-center shadow-lg shadow-primary-500/30 group-hover:shadow-primary-500/50 transition-all">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-white/20 to-white/5 border border-white/15 flex items-center justify-center shadow-lg group-hover:from-white/25 group-hover:to-white/10 transition-all">
               <Zap className="w-4 h-4 text-white" />
             </div>
-            <span className="font-bold text-sm tracking-tight hidden sm:block">
-              <span className="gradient-text">Auron</span>
-              <span className="text-surface-700 dark:text-surface-300"> · Vehicle AI</span>
+            <span className="font-bold text-sm tracking-tight hidden sm:block text-white">
+              Auron <span className="text-white/40">· Vehicle AI</span>
             </span>
           </button>
 
