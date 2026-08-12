@@ -1,18 +1,49 @@
-# ── Backend ─────────────────────────────────────────────────────────
-backend/venv/
-backend/__pycache__/
-backend/**/__pycache__/
-backend/**/*.pyc
-backend/.env
+# ─────────────────────────────────────────────────────────────────────────────
+# Auron — .dockerignore
+# Excludes dev/local files from the Docker build context.
+# Keep this minimal to ensure Docker only gets what it needs.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Python ───────────────────────────────────────────────────────────────────
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# ── Local Dev Data (NEVER ship to Docker) ────────────────────────────────────
 backend/data/
+backend/uploads/
+data/
+uploads/
 
-# ── Frontend ─────────────────────────────────────────────────────────
-frontend/node_modules/
-frontend/dist/
+# ── Environment Secrets ───────────────────────────────────────────────────────
+.env
+backend/.env
 frontend/.env
+**/.env.local
+**/.env.*.local
 
-# ── Git / IDE ────────────────────────────────────────────────────────
+# ── Frontend (not needed in backend Docker image) ────────────────────────────
+frontend/
+*.md
+
+# ── IDE / OS ─────────────────────────────────────────────────────────────────
 .git/
 .gitignore
+.DS_Store
 **/.DS_Store
 *.log
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# ── Test files ───────────────────────────────────────────────────────────────
+tests/
+test_*.py
+*_test.py

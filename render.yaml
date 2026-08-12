@@ -1,0 +1,81 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Auron — Render.com Deployment Configuration
+#
+# This file defines both the backend API and frontend static site.
+# Deploy with: https://render.com/docs/infrastructure-as-code
+#
+# ⚠️  IMPORTANT: Set these secret environment variables in the Render dashboard:
+#     GEMINI_API_KEY  — your Google Gemini API key
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── Backend API (Docker) ────────────────────────────────────────────────────
+  - type: web
+    name: auron-backend
+    env: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter          # Upgrade to standard for production persistent disk
+    region: oregon         # Choose the region closest to your users
+    healthCheckPath: /health
+
+    # ── Persistent Disk (REQUIRED for SQLite + ChromaDB) ───────────────────
+    # Without this, all uploads and conversations are lost on every deploy!
+    disk:
+      name: auron-data
+      mountPath: /app/data
+      sizeGB: 1             # Upgrade as your data grows
+
+    # ── Environment Variables ────────────────────────────────────────────────
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: DATABASE_PATH
+        value: /app/data/vehicle_intelligence.db
+      - key: UPLOAD_DIR
+        value: /app/data/uploads
+      - key: CHROMA_PERSIST_DIR
+        value: /app/data/chroma
+      - key: GEMINI_LLM_MODEL
+        value: gemini-2.0-flash-lite
+      - key: TOP_K_RESULTS
+        value: "5"
+      - key: CHUNK_SIZE
+        value: "800"
+      - key: CHUNK_OVERLAP
+        value: "200"
+      - key: MAX_FILE_SIZE_MB
+        value: "50"
+      # Set ALLOWED_ORIGINS in Render dashboard to your frontend URL:
+      # e.g. https://auron-frontend.onrender.com
+      - key: ALLOWED_ORIGINS
+        value: "*"             # Change this to your frontend URL in production!
+      # !! Set this as a SECRET in Render dashboard — never commit your key !!
+      - key: GEMINI_API_KEY
+        sync: false            # This tells Render to expect it as a secret env var
+
+  # ── Frontend Static Site ────────────────────────────────────────────────────
+  - type: web
+    name: auron-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    pullRequestPreviewsEnabled: false
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache
+    routes:
+      # SPA routing — all routes serve index.html
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Set this to your Render backend URL:
+      # e.g. https://auron-backend.onrender.com
+      - key: VITE_API_URL
+        value: ""              # Leave empty to use relative URLs (same domain)
+                               # Or set to https://your-backend.onrender.com

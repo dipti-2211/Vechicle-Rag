@@ -289,3 +289,6 @@ npm run preview                   # Preview production build
 ## 📄 License
 
 This project was built as an internship project. All rights reserved.
+
+
+
