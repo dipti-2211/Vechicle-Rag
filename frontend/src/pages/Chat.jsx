@@ -571,14 +571,9 @@ export default function Chat() {
             /* ── Empty / Welcome state ──────────────────────────────────── */
             <div className="flex flex-col items-center justify-center h-full text-center space-y-8 animate-fade-in max-w-lg mx-auto">
 
-              {/* Icon */}
-              <div className="relative">
-                <div className="w-16 h-16 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center shadow-2xl">
-                  <Sparkles className="w-8 h-8 text-white/60" />
-                </div>
-                <div className="absolute -bottom-1.5 -right-1.5 w-6 h-6 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center">
-                  <Zap className="w-3 h-3 text-indigo-400" />
-                </div>
+              {/* Icon — same as navbar logo */}
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-white/20 to-white/5 border border-white/15 flex items-center justify-center shadow-2xl">
+                <Zap className="w-8 h-8 text-white" />
               </div>
 
               {/* Heading */}

@@ -11,7 +11,14 @@
   --muted-foreground: #737373;
   --accent: rgba(255,255,255,0.08);
   --border: rgba(255,255,255,0.1);
-  --ring: rgba(99,102,241,0.5);
+  --ring: transparent;
+}
+
+/* Remove browser and Tailwind focus outlines from all inputs/textareas */
+textarea:focus,
+input:focus {
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 /* Custom scrollbar for PromptBox textarea */
@@ -133,6 +140,9 @@
   --animate-scale-in:      scale-in 0.2s cubic-bezier(0.16,1,0.3,1);
   --animate-glow-pulse:    glow-pulse 2.5s ease-in-out infinite;
   --animate-typing:        typing-dot 1.4s ease-in-out infinite;
+  /* Remove default purple/indigo ring */
+  --default-ring-color: transparent;
+  --default-ring-width: 0px;
 }
 
 /* ── Keyframes ─────────────────────────────────────────────────── */

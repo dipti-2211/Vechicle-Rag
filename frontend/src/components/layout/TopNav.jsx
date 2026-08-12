@@ -1,7 +1,7 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Home, LayoutDashboard, MessageSquare,
-  FileText, UploadCloud, Settings, Sun, Moon, Zap,
+  FileText, UploadCloud, Settings, Zap,
 } from 'lucide-react';
 import { useTheme } from '../../contexts/useTheme';
 import { LimelightNav } from '../ui/limelight-nav';
@@ -64,19 +64,7 @@ export function TopNav() {
 
           {/* Right actions */}
           <div className="flex items-center gap-2">
-            {/* Theme toggle */}
-            <button
-              onClick={toggleTheme}
-              className="p-2.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-white/[0.06] border border-transparent hover:border-white/[0.08] transition-all"
-              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            >
-              {theme === 'dark'
-                ? <Sun className="w-4 h-4" />
-                : <Moon className="w-4 h-4" />
-              }
-            </button>
-
-            {/* Chat CTA */}
+{/* Chat CTA */}
             <button
               onClick={() => navigate('/chat')}
               className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-lg btn-gradient text-sm font-semibold shadow-lg shadow-indigo-500/20"
