@@ -13,19 +13,19 @@
 fastapi==0.115.14
 uvicorn[standard]==0.34.3
 starlette==0.46.2
-python-multipart==0.0.20
+python-multipart==0.0.32
 sse-starlette==2.4.1
 
 # ── Data Validation ───────────────────────────────────────────────────────────
-pydantic==2.11.7
-# Pin pydantic-core explicitly — this ensures pip downloads the pre-built binary
-# wheel (Linux x86_64 manylinux) and NEVER tries to compile from source using
-# Rust/maturin (which fails on slow or interrupted network connections).
+# pydantic and pydantic-core MUST be pinned together — they are tightly coupled.
+# pydantic==2.13.4 requires EXACTLY pydantic-core==2.46.4.
+# These are the exact versions verified working in the local venv.
+pydantic==2.13.4
 pydantic-core==2.46.4
 pydantic-settings==2.7.1
 
 # ── Async / Database ──────────────────────────────────────────────────────────
-aiosqlite==0.20.0
+aiosqlite==0.21.0
 aiofiles==24.1.0
 
 # ── Google Gemini AI ──────────────────────────────────────────────────────────
@@ -50,10 +50,10 @@ python-docx==1.1.2
 
 # ── HTTP / Networking ─────────────────────────────────────────────────────────
 httpx==0.28.1
-requests==2.32.3
+requests==2.34.2
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
-python-dotenv==1.1.0
+python-dotenv==1.1.1
 python-jose[cryptography]==3.3.0
-bcrypt==4.2.1
-PyJWT==2.10.1
+bcrypt==5.0.0
+PyJWT==2.13.0
