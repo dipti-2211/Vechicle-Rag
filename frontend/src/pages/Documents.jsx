@@ -377,31 +377,61 @@ export default function Documents() {
       {/* ── Delete Confirm Modal ───────────────────────────────────────── */}
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setConfirmDelete(null)} />
-          <div className="relative glass-strong rounded-2xl w-full max-w-md p-6 shadow-2xl animate-scale-in">
+          <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={() => setConfirmDelete(null)} />
+          <div className="relative w-full max-w-md animate-scale-in"
+            style={{
+              background: 'linear-gradient(135deg, #0a0a0a 0%, #0d1a0d 100%)',
+              border: '1px solid rgba(34,197,94,0.25)',
+              borderRadius: '1.25rem',
+              boxShadow: '0 0 40px rgba(34,197,94,0.08), 0 25px 50px rgba(0,0,0,0.8)',
+              padding: '1.75rem',
+            }}>
+            {/* Top accent line */}
+            <div style={{ position:'absolute', top:0, left:'10%', right:'10%', height:'1px', background:'linear-gradient(90deg, transparent, rgba(34,197,94,0.5), transparent)', borderRadius:'1px' }} />
+
             <div className="flex items-start gap-4">
-              <div className="w-10 h-10 rounded-xl bg-danger-500/10 flex items-center justify-center flex-shrink-0">
-                <Trash2 className="w-5 h-5 text-danger-400" />
+              {/* Green icon box */}
+              <div style={{ width:'44px', height:'44px', borderRadius:'0.75rem', background:'rgba(34,197,94,0.08)', border:'1px solid rgba(34,197,94,0.2)', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+                <Trash2 style={{ width:'20px', height:'20px', color:'#22c55e' }} />
               </div>
               <div className="flex-1">
-                <h3 className="font-semibold text-surface-900 dark:text-surface-100">Delete Document</h3>
-                <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
-                  Are you sure you want to delete <strong className="text-surface-800 dark:text-surface-200">{confirmDelete.original_filename}</strong>?
+                <h3 style={{ fontWeight:700, color:'#f0fdf4', fontSize:'1rem', marginBottom:'0.5rem' }}>Delete Document</h3>
+                <p style={{ fontSize:'0.875rem', color:'rgba(255,255,255,0.5)', lineHeight:'1.5' }}>
+                  Are you sure you want to delete{' '}
+                  <strong style={{ color:'#86efac', fontWeight:600 }}>{confirmDelete.original_filename}</strong>?{' '}
                   This also removes all {confirmDelete.chunk_count} vector embeddings. This action cannot be undone.
                 </p>
               </div>
             </div>
+
             <div className="flex justify-end gap-3 mt-6">
               <button
                 onClick={() => setConfirmDelete(null)}
-                className="px-4 py-2 rounded-xl glass text-sm font-medium text-surface-600 dark:text-surface-400 hover:text-surface-900 dark:hover:text-white transition-colors"
+                style={{
+                  padding:'0.5rem 1.25rem', borderRadius:'0.75rem',
+                  background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)',
+                  color:'rgba(255,255,255,0.5)', fontSize:'0.875rem', fontWeight:500, cursor:'pointer',
+                  transition:'all 0.2s',
+                }}
+                onMouseEnter={e => { e.target.style.color='white'; e.target.style.background='rgba(255,255,255,0.08)'; }}
+                onMouseLeave={e => { e.target.style.color='rgba(255,255,255,0.5)'; e.target.style.background='rgba(255,255,255,0.04)'; }}
               >
                 Cancel
               </button>
               <button
                 onClick={() => handleDelete(confirmDelete)}
-                className="px-4 py-2 rounded-xl bg-danger-500 hover:bg-danger-600 text-white text-sm font-semibold transition-colors"
+                style={{
+                  padding:'0.5rem 1.25rem', borderRadius:'0.75rem',
+                  background:'linear-gradient(135deg, #16a34a, #15803d)',
+                  border:'1px solid rgba(34,197,94,0.3)',
+                  color:'white', fontSize:'0.875rem', fontWeight:600, cursor:'pointer',
+                  boxShadow:'0 4px 15px rgba(34,197,94,0.2)',
+                  transition:'all 0.2s', display:'flex', alignItems:'center', gap:'0.375rem',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background='linear-gradient(135deg, #15803d, #166534)'; e.currentTarget.style.boxShadow='0 4px 20px rgba(34,197,94,0.35)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background='linear-gradient(135deg, #16a34a, #15803d)'; e.currentTarget.style.boxShadow='0 4px 15px rgba(34,197,94,0.2)'; }}
               >
+                <Trash2 style={{ width:'14px', height:'14px' }} />
                 Delete
               </button>
             </div>

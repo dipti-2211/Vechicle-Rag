@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { RefreshCw, Server, Cpu, Layers, CheckCircle, XCircle, Zap } from 'lucide-react';
+import { RefreshCw, Server, CheckCircle, XCircle, Zap } from 'lucide-react';
 import api from '../api/axios';
 
 function InfoRow({ label, value, mono = false }) {
@@ -56,21 +56,6 @@ export default function Settings() {
         </p>
       </div>
 
-      {/* ── Appearance ───────────────────────────────────────────────── */}
-      <section className="glass rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-surface-200/50 dark:border-white/6 flex items-center gap-2">
-          <Cpu className="w-4 h-4 text-primary-400" />
-          <h2 className="font-semibold text-surface-900 dark:text-surface-100 text-sm">Appearance</h2>
-        </div>
-        <div className="px-5 py-4 space-y-3">
-          <p className="text-sm text-surface-600 dark:text-surface-400">
-            Use the <span className="font-semibold text-surface-800 dark:text-surface-200">sun/moon icon</span> in the top navigation to switch between light and dark mode.
-          </p>
-          <div className="text-xs text-surface-400 glass rounded-xl p-3 border border-white/10 dark:border-white/5">
-            Theme preference is persisted to <code className="text-primary-400 font-mono">localStorage</code> and respects your OS setting on first visit.
-          </div>
-        </div>
-      </section>
 
       {/* ── Backend Status ────────────────────────────────────────────── */}
       <section className="glass rounded-2xl overflow-hidden">
@@ -134,29 +119,10 @@ export default function Settings() {
         </div>
       </section>
 
-      {/* ── Tech Stack ────────────────────────────────────────────────── */}
-      <section className="glass rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-surface-200/50 dark:border-white/6 flex items-center gap-2">
-          <Layers className="w-4 h-4 text-emerald-400" />
-          <h2 className="font-semibold text-surface-900 dark:text-surface-100 text-sm">Tech Stack</h2>
-        </div>
-        <div className="p-4 grid grid-cols-2 gap-3">
-          {[
-            { label: 'Frontend',    value: 'React 19 · Vite · Tailwind v4' },
-            { label: 'Backend',     value: 'FastAPI · Python 3.12' },
-            { label: 'Database',    value: 'SQLite (aiosqlite)' },
-            { label: 'Vector DB',   value: 'ChromaDB (local persistent)' },
-            { label: 'Embeddings',  value: 'all-MiniLM-L6-v2 (384-dim)' },
-            { label: 'LLM',         value: 'Gemini 2.0 Flash' },
-          ].map(item => <StackBadge key={item.label} {...item} />)}
-        </div>
-      </section>
-
       {/* ── Branding footer ───────────────────────────────────────────── */}
       <div className="flex items-center justify-center gap-2 text-xs text-surface-400 py-2">
         <Zap className="w-3.5 h-3.5 text-primary-400" />
-        <span className="gradient-text font-semibold">Vehicle Intelligence Assistant</span>
-        <span>· v1.0.0</span>
+        <span className="gradient-text font-semibold">Auron</span>
       </div>
     </div>
   );
