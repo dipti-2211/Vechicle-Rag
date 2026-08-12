@@ -8,7 +8,7 @@ REST API endpoints for document management:
 - DELETE /api/documents/{id}     → Delete a document + vectors
 
 Background Pipeline (triggered after upload):
-  DocumentParser → DocumentChunker → VectorStore → update status='ready'
+  Save locally → upload to Supabase Storage → parse → chunk → embed → persist chunks → mark READY
 """
 
 import asyncio
@@ -62,18 +62,25 @@ def _get_service() -> DocumentService:
 
 # ── Background Processing Pipeline ───────────────────────────────────────────
 
-async def _process_document(doc_id: str, file_path: str, file_type: str, original_filename: str) -> None:
+async def _process_document(
+    doc_id: str,
+    file_path: str,
+    file_type: str,
+    original_filename: str,
+    storage_path: Optional[str] = None,
+) -> None:
     """
-    Background task: parse → chunk → embed → update status.
+    Background task: upload to Supabase Storage → parse → chunk → embed →
+    persist chunks → update status='ready'.
 
-    This runs AFTER the upload endpoint has returned 201 to the client,
-    so the user sees an instant response even for large files.
+    This runs AFTER the upload endpoint has returned 201 to the client.
 
     Args:
         doc_id: Document UUID (already in the database as 'processing').
-        file_path: Absolute path to the saved file.
+        file_path: Absolute path to the saved local file.
         file_type: File extension without dot (pdf, csv, xlsx, docx, txt).
         original_filename: Original filename for metadata.
+        storage_path: Supabase Storage path if already uploaded (may be None).
     """
     settings = get_settings()
     service = _get_service()
@@ -81,6 +88,22 @@ async def _process_document(doc_id: str, file_path: str, file_type: str, origina
     logger.info("Background pipeline started for document %s (%s)", doc_id, original_filename)
 
     try:
+        # ── Step 0: Upload to Supabase Storage (if not done yet) ──────
+        if not storage_path and settings.supabase_configured:
+            logger.info("[%s] Step 0 — Uploading to Supabase Storage...", doc_id)
+            from app.services.supabase_client import upload_file_to_storage
+            storage_path = upload_file_to_storage(
+                file_path=file_path,
+                document_id=doc_id,
+                original_filename=original_filename,
+            )
+            if storage_path:
+                # Persist storage_path in the DB
+                await service.update_storage_path(doc_id, storage_path)
+                logger.info("[%s] Uploaded to Supabase Storage: %s", doc_id, storage_path)
+            else:
+                logger.warning("[%s] Supabase Storage upload failed — continuing without cloud storage.", doc_id)
+
         # ── Step 1: Parse ──────────────────────────────────────────────
         logger.info("[%s] Step 1/3 — Parsing...", doc_id)
         text = DocumentParser.parse(file_path, file_type)
@@ -109,20 +132,36 @@ async def _process_document(doc_id: str, file_path: str, file_type: str, origina
         if not chunks:
             raise ValueError("Chunker produced zero chunks — document text may be too short.")
 
-        # ── Step 3: Embed + Store ──────────────────────────────────────
+        # ── Step 3: Embed + Store in ChromaDB ─────────────────────────
         logger.info("[%s] Step 3/3 — Embedding %d chunks...", doc_id, len(chunks))
         vector_store = _get_vector_store()
+        chunk_metadata = {
+            "original_filename": original_filename,
+            "file_type": file_type,
+        }
         vector_store.add_chunks(
             document_id=doc_id,
             chunks=chunks,
-            metadata={
-                "original_filename": original_filename,
-                "file_type": file_type,
-            },
+            metadata=chunk_metadata,
         )
 
-        # ── Step 3.5: Extract vehicle metadata ────────────────────────
-        logger.info("[%s] Step 3.5 — Extracting vehicle metadata...", doc_id)
+        # ── Step 3.5: Persist chunks to Supabase for restart recovery ──
+        logger.info("[%s] Step 3.5 — Persisting chunks to database...", doc_id)
+        try:
+            db = get_database()
+            from app.services.chunk_store import persist_chunks
+            await persist_chunks(
+                db=db,
+                document_id=doc_id,
+                chunks=chunks,
+                base_metadata=chunk_metadata,
+            )
+        except Exception as chunk_err:
+            # Non-fatal: ChromaDB already has the data, this is just for restart recovery
+            logger.warning("[%s] Chunk persistence failed (non-fatal): %s", doc_id, chunk_err)
+
+        # ── Step 3.6: Extract vehicle metadata ────────────────────────
+        logger.info("[%s] Step 3.6 — Extracting vehicle metadata...", doc_id)
         metadata = MetadataExtractor.extract(text)
 
         # ── Step 4: Mark as ready ─────────────────────────────────────
@@ -160,7 +199,7 @@ async def _process_document(doc_id: str, file_path: str, file_type: str, origina
     description=(
         "Upload a vehicle manual or log file. "
         "Returns immediately with status='processing'. "
-        "Background pipeline (parse → chunk → embed) runs asynchronously."
+        "Background pipeline (upload to Supabase → parse → chunk → embed) runs asynchronously."
     ),
 )
 async def upload_document(
@@ -232,6 +271,7 @@ async def upload_document(
         file_path=str(file_path),
         file_type=file_type,
         original_filename=file.filename,
+        storage_path=None,
     )
 
     logger.info("Upload accepted for %s (%s). Background processing queued.", doc_id, file.filename)
@@ -277,7 +317,7 @@ async def list_documents(
     "/{document_id}/status",
     response_model=DocumentStatusResponse,
     summary="Get document processing status",
-    description="Lightweight endpoint for polling a document's processing status. More efficient than fetching the full document.",
+    description="Lightweight endpoint for polling a document's processing status.",
     responses={404: {"model": ErrorResponse}},
 )
 async def get_document_status(document_id: str) -> DocumentStatusResponse:
@@ -317,11 +357,11 @@ async def get_document(document_id: str) -> DocumentResponse:
     "/{document_id}",
     response_model=DocumentDeleteResponse,
     summary="Delete a document",
-    description="Deletes a document, its stored file, and all associated vector embeddings from ChromaDB.",
+    description="Deletes a document, its stored file, Supabase Storage file, and all associated vector embeddings.",
     responses={404: {"model": ErrorResponse}},
 )
 async def delete_document(document_id: str) -> DocumentDeleteResponse:
-    """Delete a document, its file on disk, and its vectors in ChromaDB."""
+    """Delete a document, its file on disk, Supabase Storage file, and its vectors in ChromaDB."""
     service = _get_service()
 
     # Confirm the document exists before any deletion
@@ -338,10 +378,24 @@ async def delete_document(document_id: str) -> DocumentDeleteResponse:
         deleted_chunks = vector_store.delete_chunks(document_id)
         logger.info("Deleted %d vector chunks for document %s.", deleted_chunks, document_id)
     except Exception as e:
-        # Log but don't fail the request — DB + file cleanup should still proceed
         logger.error("Error deleting vectors for document %s: %s", document_id, e)
 
-    # 2. Delete file from disk + record from SQLite
+    # 2. Delete file from Supabase Storage if it was uploaded there
+    try:
+        db = get_database()
+        raw = await db.fetch_one(
+            "SELECT storage_path FROM documents WHERE id = ?",
+            (document_id,),
+        )
+        if raw and raw.get("storage_path"):
+            from app.services.supabase_client import delete_file_from_storage
+            deleted_storage = delete_file_from_storage(raw["storage_path"])
+            if deleted_storage:
+                logger.info("Deleted Supabase Storage file for document %s.", document_id)
+    except Exception as e:
+        logger.warning("Could not delete Supabase Storage file for %s: %s", document_id, e)
+
+    # 3. Delete file from disk + record from database
     result = await service.delete_document(document_id)
     if result is None:
         raise HTTPException(
@@ -422,4 +476,3 @@ async def preview_document(document_id: str) -> DocumentPreviewResponse:
             status_code=500,
             detail=f"Failed to generate preview: {e}",
         )
-

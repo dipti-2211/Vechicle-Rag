@@ -357,25 +357,49 @@ class ChatService:
         )
 
         # ── Top documents by query count ─────────────────────────────────
-        # Count how often each document is cited in answers
-        top_rows = await self.db.fetch_all(
-            """
-            SELECT
-                json_extract(j.value, '$.document_name') AS name,
-                COUNT(*) AS query_count
-            FROM messages m,
-                 json_each(m.sources) j
-            WHERE m.role = 'assistant'
-            GROUP BY name
-            ORDER BY query_count DESC
-            LIMIT 5
-            """
-        )
-        top_docs = [
-            {"name": r["name"], "query_count": r["query_count"]}
-            for r in top_rows
-            if r["name"]
-        ]
+        # Count how often each document is cited in answers.
+        # Uses different JSON functions for SQLite vs PostgreSQL.
+        top_docs = []
+        try:
+            db_class = type(self.db).__name__
+            if "Supabase" in db_class:
+                # PostgreSQL / Supabase — uses jsonb_array_elements
+                top_rows = await self.db.fetch_all(
+                    """
+                    SELECT
+                        elem->>'document_name' AS name,
+                        COUNT(*) AS query_count
+                    FROM messages m,
+                         jsonb_array_elements(m.sources::jsonb) AS elem
+                    WHERE m.role = 'assistant'
+                    GROUP BY name
+                    ORDER BY query_count DESC
+                    LIMIT 5
+                    """
+                )
+            else:
+                # SQLite — uses json_extract / json_each
+                top_rows = await self.db.fetch_all(
+                    """
+                    SELECT
+                        json_extract(j.value, '$.document_name') AS name,
+                        COUNT(*) AS query_count
+                    FROM messages m,
+                         json_each(m.sources) j
+                    WHERE m.role = 'assistant'
+                    GROUP BY name
+                    ORDER BY query_count DESC
+                    LIMIT 5
+                    """
+                )
+            top_docs = [
+                {"name": r["name"], "query_count": r["query_count"]}
+                for r in top_rows
+                if r.get("name")
+            ]
+        except Exception as analytics_err:
+            logger.warning("Could not compute top documents: %s", analytics_err)
+            top_docs = []
 
         return AnalyticsResponse(
             total_queries=total_queries,

@@ -5,7 +5,10 @@
 # Deploy with: https://render.com/docs/infrastructure-as-code
 #
 # ⚠️  IMPORTANT: Set these secret environment variables in the Render dashboard:
-#     GEMINI_API_KEY  — your Google Gemini API key
+#     GEMINI_API_KEY              — your Google Gemini API key
+#     SUPABASE_URL                — your Supabase project URL
+#     SUPABASE_SERVICE_ROLE_KEY   — your Supabase service role key (backend only!)
+#     SUPABASE_DB_URL             — your Supabase PostgreSQL direct connection string
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -15,16 +18,17 @@ services:
     env: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
-    plan: starter          # Upgrade to standard for production persistent disk
-    region: oregon         # Choose the region closest to your users
+    plan: starter
+    region: oregon
     healthCheckPath: /health
 
-    # ── Persistent Disk (REQUIRED for SQLite + ChromaDB) ───────────────────
-    # Without this, all uploads and conversations are lost on every deploy!
+    # ── Persistent Disk (for local ChromaDB cache + temp uploads) ──────────
+    # Even with Supabase, keeping a small disk prevents re-downloading the
+    # embedding model on every cold start and caches the ChromaDB index.
     disk:
       name: auron-data
       mountPath: /app/data
-      sizeGB: 1             # Upgrade as your data grows
+      sizeGB: 1
 
     # ── Environment Variables ────────────────────────────────────────────────
     envVars:
@@ -48,13 +52,21 @@ services:
         value: "200"
       - key: MAX_FILE_SIZE_MB
         value: "50"
-      # Set ALLOWED_ORIGINS in Render dashboard to your frontend URL:
-      # e.g. https://auron-frontend.onrender.com
+      # CORS — allow the deployed frontend (and localhost for local dev)
       - key: ALLOWED_ORIGINS
-        value: "*"             # Change this to your frontend URL in production!
-      # !! Set this as a SECRET in Render dashboard — never commit your key !!
+        value: "https://auron-frontend.onrender.com,http://localhost:5173,http://localhost:3000"
+      # Supabase Storage bucket name
+      - key: SUPABASE_STORAGE_BUCKET
+        value: documents
+      # !! Set these as SECRETS in the Render dashboard — never commit real values !!
       - key: GEMINI_API_KEY
-        sync: false            # This tells Render to expect it as a secret env var
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_DB_URL
+        sync: false
 
   # ── Frontend Static Site ────────────────────────────────────────────────────
   - type: web
@@ -74,8 +86,6 @@ services:
         source: /*
         destination: /index.html
     envVars:
-      # Set this to your Render backend URL:
-      # e.g. https://auron-backend.onrender.com
+      # Production backend URL — used by Vite at build time
       - key: VITE_API_URL
-        value: ""              # Leave empty to use relative URLs (same domain)
-                               # Or set to https://your-backend.onrender.com
+        value: "https://auron-backend-un4f.onrender.com"

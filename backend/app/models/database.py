@@ -1,5 +1,5 @@
 """
-Vehicle Intelligence Assistant — SQLite Database Manager
+Vehicle Intelligence Assistant — SQLite Database Manager (local / fallback)
 
 Manages the SQLite database lifecycle:
 - Connection management via aiosqlite
@@ -7,6 +7,10 @@ Manages the SQLite database lifecycle:
 - CRUD helper methods
 
 Uses a singleton pattern — one database instance shared across the app.
+
+In production (with Supabase configured), main.py will register a
+SupabaseDatabase instance instead. All services call get_database() which
+returns whatever has been registered — SQLite or Supabase.
 """
 
 import aiosqlite
@@ -16,7 +20,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# SQL for creating all tables
+# SQL for creating all tables (SQLite)
 SCHEMA_SQL = """
 -- Documents metadata
 CREATE TABLE IF NOT EXISTS documents (
@@ -25,7 +29,8 @@ CREATE TABLE IF NOT EXISTS documents (
     original_filename TEXT NOT NULL,
     file_type TEXT NOT NULL,
     file_size INTEGER NOT NULL,
-    file_path TEXT NOT NULL,
+    file_path TEXT NOT NULL DEFAULT '',
+    storage_path TEXT,
     status TEXT DEFAULT 'processing' CHECK (status IN ('processing', 'ready', 'error')),
     page_count INTEGER,
     chunk_count INTEGER DEFAULT 0,
@@ -34,6 +39,17 @@ CREATE TABLE IF NOT EXISTS documents (
     error_message TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Document chunks (for ChromaDB reconstruction after restarts)
+CREATE TABLE IF NOT EXISTS document_chunks (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    chunk_text TEXT NOT NULL,
+    metadata TEXT DEFAULT '{}',
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
 );
 
 -- Conversations
@@ -51,7 +67,7 @@ CREATE TABLE IF NOT EXISTS messages (
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
     content TEXT NOT NULL,
     sources TEXT DEFAULT '[]',
-    rating INTEGER DEFAULT NULL,   -- 1 = thumbs up, -1 = thumbs down, NULL = no rating
+    rating INTEGER DEFAULT NULL,
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
@@ -61,6 +77,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation
 CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status);
 CREATE INDEX IF NOT EXISTS idx_documents_created_at ON documents(created_at);
 CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at);
+CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON document_chunks(document_id);
 """
 
 
@@ -81,7 +98,6 @@ class Database:
 
     async def connect(self) -> None:
         """Open the database connection and create tables."""
-        # Ensure the directory exists
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
         self._connection = await aiosqlite.connect(self.db_path)
@@ -101,7 +117,6 @@ class Database:
 
         # ── Safe migrations for existing databases ────────────────────
         # Add 'rating' column to messages if it doesn't exist yet
-        # (ALTER TABLE ADD COLUMN is idempotent-safe via try/except)
         try:
             await self._connection.execute(
                 "ALTER TABLE messages ADD COLUMN rating INTEGER DEFAULT NULL"
@@ -109,10 +124,19 @@ class Database:
             await self._connection.commit()
             logger.info("Migration: added 'rating' column to messages table")
         except Exception:
-            # Column already exists — this is expected on subsequent startups
             pass
 
-        logger.info("Database connected: %s", self.db_path)
+        # Add 'storage_path' column to documents if it doesn't exist yet
+        try:
+            await self._connection.execute(
+                "ALTER TABLE documents ADD COLUMN storage_path TEXT"
+            )
+            await self._connection.commit()
+            logger.info("Migration: added 'storage_path' column to documents table")
+        except Exception:
+            pass
+
+        logger.info("SQLite database connected: %s", self.db_path)
 
     async def disconnect(self) -> None:
         """Close the database connection."""
@@ -155,25 +179,37 @@ class Database:
         return [dict(row) for row in rows]
 
 
-# ── Singleton Instance ───────────────────────────────────────────────
-# Initialized in main.py lifespan; imported by services.
-_db_instance: Optional[Database] = None
+# ── Singleton Instance ───────────────────────────────────────────────────────
+# Can be either a SQLite Database or a SupabaseDatabase — both implement
+# the same fetch_all / fetch_one / execute interface.
+_db_instance = None
 
 
-def get_database() -> Database:
+def get_database():
     """
     Get the global database instance.
 
     Raises RuntimeError if the database hasn't been initialized yet.
-    This is called by FastAPI dependency injection.
+    This is called by FastAPI dependency injection and services.
     """
     if _db_instance is None:
         raise RuntimeError("Database not initialized. App may not have started.")
     return _db_instance
 
 
-async def init_database(db_path: str) -> Database:
-    """Initialize and return the global database instance."""
+def set_database(instance) -> None:
+    """
+    Register the active database instance.
+
+    Called by main.py at startup with either a SQLite Database or a
+    SupabaseDatabase instance, depending on configuration.
+    """
+    global _db_instance
+    _db_instance = instance
+
+
+async def init_database(db_path: str) -> "Database":
+    """Initialize and return a SQLite Database instance (local dev / fallback)."""
     global _db_instance
     _db_instance = Database(db_path)
     await _db_instance.connect()

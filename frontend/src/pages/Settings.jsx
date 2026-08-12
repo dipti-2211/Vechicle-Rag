@@ -103,7 +103,7 @@ export default function Settings() {
             <div className="py-6 text-center">
               <XCircle className="w-8 h-8 text-danger-400 mx-auto mb-2" />
               <p className="text-sm text-surface-500 dark:text-surface-400">
-                Could not reach the backend. Make sure the server is running on port <code className="text-primary-400 font-mono">8000</code>.
+                Could not reach the backend server. Please check that the service is available.
               </p>
             </div>
           ) : health ? (

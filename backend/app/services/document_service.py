@@ -275,4 +275,25 @@ class DocumentService:
             chunk_count=row["chunk_count"] or 0,
             error_message=row.get("error_message"),
         )
+    async def update_storage_path(
+        self,
+        document_id: str,
+        storage_path: str,
+    ) -> None:
+        """
+        Update the Supabase Storage path for a document after successful upload.
+
+        Args:
+            document_id: The document UUID.
+            storage_path: The Supabase Storage path (e.g. "<doc_id>/<filename>").
+        """
+        await self.db.execute(
+            """
+            UPDATE documents
+            SET storage_path = ?, updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (storage_path, document_id),
+        )
+        logger.debug("Updated storage_path for document %s: %s", document_id, storage_path)
 

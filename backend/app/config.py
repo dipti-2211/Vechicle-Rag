@@ -30,16 +30,28 @@ class Settings(BaseSettings):
     # ── Server ───────────────────────────────────────────────────────
     host: str = "0.0.0.0"
     port: int = 8000
-    allowed_origins: str = "http://localhost:5173,http://localhost:3000"
+    allowed_origins: str = (
+        "http://localhost:5173,"
+        "http://localhost:3000,"
+        "https://auron-frontend.onrender.com"
+    )
 
     @property
     def cors_origins(self) -> List[str]:
         """Parse comma-separated CORS origins into a list."""
         return [origin.strip() for origin in self.allowed_origins.split(",")]
 
-    # ── Database ─────────────────────────────────────────────────────
+    # ── Database (SQLite — kept for local dev fallback) ───────────────
     database_path: str = "./data/vehicle_intelligence.db"
-    
+
+    # ── Supabase ─────────────────────────────────────────────────────
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_storage_bucket: str = "documents"
+    # Direct PostgreSQL connection string for asyncpg (Supabase → Settings → Database → Connection string)
+    # Format: postgresql://postgres.[project-ref]:[db-password]@aws-0-region.pooler.supabase.com:6543/postgres
+    supabase_db_url: str = ""
+
     # ── File Upload ──────────────────────────────────────────────────
     upload_dir: str = "./uploads"
     max_file_size_mb: int = 50
@@ -74,6 +86,11 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         """Check if running in production mode."""
         return self.app_env.lower() == "production"
+
+    @property
+    def supabase_configured(self) -> bool:
+        """Return True only when Supabase URL and service role key are present."""
+        return bool(self.supabase_url and self.supabase_service_role_key)
 
 
 @lru_cache()
