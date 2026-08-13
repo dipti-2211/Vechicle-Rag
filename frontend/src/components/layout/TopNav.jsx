@@ -1,9 +1,10 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Home, LayoutDashboard, MessageSquare,
-  FileText, UploadCloud, Settings, Zap,
+  FileText, UploadCloud, Settings, Zap, LogOut,
 } from 'lucide-react';
 import { useTheme } from '../../contexts/useTheme';
+import { useAuth } from '../../contexts/useAuth';
 import { LimelightNav } from '../ui/limelight-nav';
 
 const NAV_ITEMS = [
@@ -17,6 +18,7 @@ const NAV_ITEMS = [
 
 export function TopNav() {
   const { theme, toggleTheme } = useTheme();
+  const { signOut, user } = useAuth();
   const navigate  = useNavigate();
   const location  = useLocation();
 
@@ -33,6 +35,15 @@ export function TopNav() {
     icon: <Icon />,
     onClick: () => navigate(path),
   }));
+
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      navigate('/login');
+    } catch (err) {
+      console.error('Logout failed:', err);
+    }
+  };
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 h-16">
@@ -64,7 +75,7 @@ export function TopNav() {
 
           {/* Right actions */}
           <div className="flex items-center gap-2">
-{/* Chat CTA */}
+            {/* Chat CTA */}
             <button
               onClick={() => navigate('/chat')}
               className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-lg btn-gradient text-sm font-semibold shadow-lg shadow-indigo-500/20"
@@ -72,6 +83,18 @@ export function TopNav() {
               <MessageSquare className="w-4 h-4" />
               Ask AI
             </button>
+
+            {/* Logout — only shown when authenticated */}
+            {user && (
+              <button
+                id="logout-btn"
+                onClick={handleLogout}
+                title="Sign out"
+                className="p-2 rounded-lg border border-white/[0.08] bg-white/[0.03] text-neutral-500 hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 transition-all"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -98,6 +121,16 @@ export function TopNav() {
               </button>
             );
           })}
+          {/* Mobile logout */}
+          {user && (
+            <button
+              onClick={handleLogout}
+              className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl transition-all text-neutral-600 hover:text-red-400"
+            >
+              <LogOut className="w-5 h-5" />
+              <span className="text-[10px] font-medium">Logout</span>
+            </button>
+          )}
         </div>
       </div>
     </header>

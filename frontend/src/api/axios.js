@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { supabase } from '../lib/supabase'
 
 /**
  * Determine the API base URL at runtime.
@@ -39,6 +40,22 @@ export const API_BASE_URL = getApiBaseUrl()
 const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 120000, // 120 second timeout (large file uploads need more time)
+})
+
+// ── Request Interceptor: Attach Supabase JWT ────────────────────────
+// Reads the current session from Supabase and injects
+// Authorization: Bearer <access_token> into every request.
+// The backend verifies this token to identify the current user.
+api.interceptors.request.use(async (config) => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session?.access_token) {
+      config.headers['Authorization'] = `Bearer ${session.access_token}`
+    }
+  } catch {
+    // Session unavailable — request proceeds without auth header
+  }
+  return config
 })
 
 // ── Response Interceptor: Handle Common Errors ──────────────────────

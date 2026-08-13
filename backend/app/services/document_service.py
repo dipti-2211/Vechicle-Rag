@@ -2,9 +2,10 @@
 Vehicle Intelligence Assistant — Document Service
 
 Business logic for document CRUD operations:
-- CRUD for document metadata in SQLite
+- CRUD for document metadata in SQLite / Supabase PostgREST
 - File deletion from the upload directory
 - Delegates vector cleanup to VectorStore (called by the route layer)
+- All operations are scoped to user_id when provided
 """
 
 import json
@@ -34,13 +35,15 @@ class DocumentService:
         self,
         status: Optional[str] = None,
         file_type: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> DocumentListResponse:
         """
-        List all documents, optionally filtered by status or file type.
+        List documents, optionally filtered by status, file type, or user.
 
         Args:
             status: Filter by document status (processing/ready/error).
             file_type: Filter by file type (pdf/csv/xlsx/docx/txt).
+            user_id: Filter to only this user's documents. If None, returns all.
 
         Returns:
             DocumentListResponse with the matching documents.
@@ -49,6 +52,9 @@ class DocumentService:
         params: list = []
         conditions: list[str] = []
 
+        if user_id:
+            conditions.append("user_id = ?")
+            params.append(user_id)
         if status:
             conditions.append("status = ?")
             params.append(status)
@@ -71,20 +77,31 @@ class DocumentService:
             total=len(documents),
         )
 
-    async def get_document(self, document_id: str) -> Optional[DocumentResponse]:
+    async def get_document(
+        self,
+        document_id: str,
+        user_id: Optional[str] = None,
+    ) -> Optional[DocumentResponse]:
         """
         Get a single document by ID.
 
         Args:
             document_id: The document UUID.
+            user_id: If provided, verifies that the document belongs to this user.
 
         Returns:
-            DocumentResponse if found, None otherwise.
+            DocumentResponse if found (and owned by user_id if given), None otherwise.
         """
-        row = await self.db.fetch_one(
-            "SELECT * FROM documents WHERE id = ?",
-            (document_id,),
-        )
+        if user_id:
+            row = await self.db.fetch_one(
+                "SELECT * FROM documents WHERE id = ? AND user_id = ?",
+                (document_id, user_id),
+            )
+        else:
+            row = await self.db.fetch_one(
+                "SELECT * FROM documents WHERE id = ?",
+                (document_id,),
+            )
         if row is None:
             return None
         return DocumentResponse(**row)
@@ -96,12 +113,12 @@ class DocumentService:
         file_size: int,
         file_path: str,
         doc_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> DocumentResponse:
         """
         Create a new document record in the database.
 
         The document starts with status='processing'.
-        The actual file processing happens asynchronously in later milestones.
 
         Args:
             original_filename: Original name of the uploaded file.
@@ -109,6 +126,7 @@ class DocumentService:
             file_size: File size in bytes.
             file_path: Path where the file is stored.
             doc_id: Optional UUID. If not provided, one is generated.
+            user_id: The authenticated user's UUID (owner of the document).
 
         Returns:
             The created DocumentResponse.
@@ -116,17 +134,26 @@ class DocumentService:
         doc_id = doc_id or str(uuid.uuid4())
         filename = f"{doc_id}.{file_type}"
 
-        await self.db.execute(
-            """
-            INSERT INTO documents (id, filename, original_filename, file_type, file_size, file_path, status)
-            VALUES (?, ?, ?, ?, ?, ?, 'processing')
-            """,
-            (doc_id, filename, original_filename, file_type, file_size, file_path),
-        )
+        if user_id:
+            await self.db.execute(
+                """
+                INSERT INTO documents (id, filename, original_filename, file_type, file_size, file_path, status, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, 'processing', ?)
+                """,
+                (doc_id, filename, original_filename, file_type, file_size, file_path, user_id),
+            )
+        else:
+            await self.db.execute(
+                """
+                INSERT INTO documents (id, filename, original_filename, file_type, file_size, file_path, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'processing')
+                """,
+                (doc_id, filename, original_filename, file_type, file_size, file_path),
+            )
 
         logger.info(
-            "Created document record: id=%s, name=%s, type=%s, size=%d",
-            doc_id, original_filename, file_type, file_size,
+            "Created document record: id=%s, name=%s, type=%s, size=%d, user=%s",
+            doc_id, original_filename, file_type, file_size, user_id or "anon",
         )
 
         # Fetch and return the created record
@@ -178,7 +205,11 @@ class DocumentService:
 
         return await self.get_document(document_id)
 
-    async def delete_document(self, document_id: str) -> Optional[DocumentDeleteResponse]:
+    async def delete_document(
+        self,
+        document_id: str,
+        user_id: Optional[str] = None,
+    ) -> Optional[DocumentDeleteResponse]:
         """
         Delete a document record and its stored file from disk.
 
@@ -187,11 +218,12 @@ class DocumentService:
 
         Args:
             document_id: The document UUID.
+            user_id: If provided, verifies that the document belongs to this user.
 
         Returns:
             DocumentDeleteResponse if found and deleted, None if not found.
         """
-        doc = await self.get_document(document_id)
+        doc = await self.get_document(document_id, user_id=user_id)
         if doc is None:
             return None
 
@@ -206,7 +238,7 @@ class DocumentService:
                 stored_file.unlink()
                 logger.info("Deleted file: %s", stored_file)
 
-        # Delete from database (cascade removes associated messages)
+        # Delete from database (cascade removes associated chunks)
         await self.db.execute(
             "DELETE FROM documents WHERE id = ?",
             (document_id,),
@@ -216,25 +248,38 @@ class DocumentService:
 
         return DocumentDeleteResponse(id=document_id)
 
-    async def get_document_count(self) -> int:
-        """Get the total number of documents."""
+    async def get_document_count(self, user_id: Optional[str] = None) -> int:
+        """Get the total number of documents (optionally for a specific user)."""
         try:
-            # Try the SQL COUNT query (works on SQLite)
-            row = await self.db.fetch_one("SELECT COUNT(*) as count FROM documents")
+            if user_id:
+                row = await self.db.fetch_one(
+                    "SELECT COUNT(*) as count FROM documents WHERE user_id = ?",
+                    (user_id,),
+                )
+            else:
+                row = await self.db.fetch_one("SELECT COUNT(*) as count FROM documents")
             if row:
                 return row.get("count", 0) or 0
         except Exception:
             pass
         # Fallback: fetch all and count (works on Supabase PostgREST)
-        rows = await self.db.fetch_all("SELECT * FROM documents")
+        if user_id:
+            rows = await self.db.fetch_all(
+                "SELECT * FROM documents WHERE user_id = ?", (user_id,)
+            )
+        else:
+            rows = await self.db.fetch_all("SELECT * FROM documents")
         return len(rows)
 
-    async def get_document_stats(self):
+    async def get_document_stats(self, user_id: Optional[str] = None):
         """
         Get aggregate document statistics.
 
         Works with both SQLite (native aggregate query) and Supabase PostgREST
         (client-side aggregation from full document list).
+
+        Args:
+            user_id: If provided, only counts documents belonging to this user.
 
         Returns a DocumentStats with total, ready, processing, error counts,
         total_chunks, and total_size_bytes.
@@ -244,8 +289,13 @@ class DocumentService:
         db_class = type(self.db).__name__
 
         if "Supabase" in db_class:
-            # PostgREST: fetch all documents and aggregate client-side
-            rows = await self.db.fetch_all("SELECT * FROM documents")
+            # PostgREST: fetch documents and aggregate client-side
+            if user_id:
+                rows = await self.db.fetch_all(
+                    "SELECT * FROM documents WHERE user_id = ?", (user_id,)
+                )
+            else:
+                rows = await self.db.fetch_all("SELECT * FROM documents")
             total = len(rows)
             ready = sum(1 for r in rows if r.get("status") == "ready")
             processing = sum(1 for r in rows if r.get("status") == "processing")
@@ -262,18 +312,33 @@ class DocumentService:
             )
 
         # SQLite: native aggregate query
-        row = await self.db.fetch_one(
-            """
-            SELECT
-                COUNT(*) AS total,
-                SUM(CASE WHEN status = 'ready'      THEN 1 ELSE 0 END) AS ready,
-                SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing,
-                SUM(CASE WHEN status = 'error'      THEN 1 ELSE 0 END) AS error,
-                COALESCE(SUM(chunk_count), 0) AS total_chunks,
-                COALESCE(SUM(file_size),  0) AS total_size_bytes
-            FROM documents
-            """
-        )
+        if user_id:
+            row = await self.db.fetch_one(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN status = 'ready'      THEN 1 ELSE 0 END) AS ready,
+                    SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing,
+                    SUM(CASE WHEN status = 'error'      THEN 1 ELSE 0 END) AS error,
+                    COALESCE(SUM(chunk_count), 0) AS total_chunks,
+                    COALESCE(SUM(file_size),  0) AS total_size_bytes
+                FROM documents WHERE user_id = ?
+                """,
+                (user_id,),
+            )
+        else:
+            row = await self.db.fetch_one(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN status = 'ready'      THEN 1 ELSE 0 END) AS ready,
+                    SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing,
+                    SUM(CASE WHEN status = 'error'      THEN 1 ELSE 0 END) AS error,
+                    COALESCE(SUM(chunk_count), 0) AS total_chunks,
+                    COALESCE(SUM(file_size),  0) AS total_size_bytes
+                FROM documents
+                """
+            )
         if row is None:
             return DocumentStats()
         return DocumentStats(
@@ -309,6 +374,7 @@ class DocumentService:
             chunk_count=row["chunk_count"] or 0,
             error_message=row.get("error_message"),
         )
+
     async def update_storage_path(
         self,
         document_id: str,
@@ -331,4 +397,3 @@ class DocumentService:
             (storage_path, now, document_id),
         )
         logger.debug("Updated storage_path for document %s: %s", document_id, storage_path)
-

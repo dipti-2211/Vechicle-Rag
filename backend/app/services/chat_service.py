@@ -2,8 +2,8 @@
 Vehicle Intelligence Assistant — Chat Service
 
 Business logic for conversation and message management.
-Handles CRUD for conversations and messages in SQLite.
-RAG-powered answer generation will be added in Milestone 10.
+Handles CRUD for conversations and messages in SQLite / Supabase.
+All operations are scoped to user_id when provided for data isolation.
 """
 
 import json
@@ -36,16 +36,28 @@ class ChatService:
 
     # ── Conversations ────────────────────────────────────────────────
 
-    async def list_conversations(self) -> ConversationListResponse:
+    async def list_conversations(
+        self,
+        user_id: Optional[str] = None,
+    ) -> ConversationListResponse:
         """
-        List all conversations, ordered by most recently updated.
+        List conversations, ordered by most recently updated.
+
+        Args:
+            user_id: If provided, only returns conversations for this user.
 
         Returns:
-            ConversationListResponse with all conversations.
+            ConversationListResponse with matching conversations.
         """
-        rows = await self.db.fetch_all(
-            "SELECT * FROM conversations ORDER BY updated_at DESC"
-        )
+        if user_id:
+            rows = await self.db.fetch_all(
+                "SELECT * FROM conversations WHERE user_id = ? ORDER BY updated_at DESC",
+                (user_id,),
+            )
+        else:
+            rows = await self.db.fetch_all(
+                "SELECT * FROM conversations ORDER BY updated_at DESC"
+            )
         conversations = [ConversationResponse(**row) for row in rows]
 
         return ConversationListResponse(
@@ -54,33 +66,45 @@ class ChatService:
         )
 
     async def get_conversation(
-        self, conversation_id: str
+        self,
+        conversation_id: str,
+        user_id: Optional[str] = None,
     ) -> Optional[ConversationResponse]:
         """
         Get a single conversation by ID.
 
         Args:
             conversation_id: The conversation UUID.
+            user_id: If provided, verifies ownership.
 
         Returns:
-            ConversationResponse if found, None otherwise.
+            ConversationResponse if found (and owned), None otherwise.
         """
-        row = await self.db.fetch_one(
-            "SELECT * FROM conversations WHERE id = ?",
-            (conversation_id,),
-        )
+        if user_id:
+            row = await self.db.fetch_one(
+                "SELECT * FROM conversations WHERE id = ? AND user_id = ?",
+                (conversation_id, user_id),
+            )
+        else:
+            row = await self.db.fetch_one(
+                "SELECT * FROM conversations WHERE id = ?",
+                (conversation_id,),
+            )
         if row is None:
             return None
         return ConversationResponse(**row)
 
     async def create_conversation(
-        self, data: ConversationCreate
+        self,
+        data: ConversationCreate,
+        user_id: Optional[str] = None,
     ) -> ConversationResponse:
         """
         Create a new conversation.
 
         Args:
             data: ConversationCreate with optional title.
+            user_id: The authenticated user's UUID (owner).
 
         Returns:
             The created ConversationResponse.
@@ -88,22 +112,34 @@ class ChatService:
         conv_id = str(uuid.uuid4())
         title = data.title or "New Conversation"
 
-        await self.db.execute(
-            """
-            INSERT INTO conversations (id, title)
-            VALUES (?, ?)
-            """,
-            (conv_id, title),
-        )
+        if user_id:
+            await self.db.execute(
+                """
+                INSERT INTO conversations (id, title, user_id)
+                VALUES (?, ?, ?)
+                """,
+                (conv_id, title, user_id),
+            )
+        else:
+            await self.db.execute(
+                """
+                INSERT INTO conversations (id, title)
+                VALUES (?, ?)
+                """,
+                (conv_id, title),
+            )
 
-        logger.info("Created conversation: id=%s, title=%s", conv_id, title)
+        logger.info("Created conversation: id=%s, title=%s, user=%s", conv_id, title, user_id or "anon")
 
         conv = await self.get_conversation(conv_id)
         assert conv is not None, f"Conversation {conv_id} should exist after insert"
         return conv
 
     async def update_conversation_title(
-        self, conversation_id: str, title: str
+        self,
+        conversation_id: str,
+        title: str,
+        user_id: Optional[str] = None,
     ) -> Optional[ConversationResponse]:
         """
         Update the title of a conversation.
@@ -111,11 +147,12 @@ class ChatService:
         Args:
             conversation_id: The conversation UUID.
             title: New title.
+            user_id: If provided, verifies ownership before updating.
 
         Returns:
-            Updated ConversationResponse, or None if not found.
+            Updated ConversationResponse, or None if not found/not owned.
         """
-        conv = await self.get_conversation(conversation_id)
+        conv = await self.get_conversation(conversation_id, user_id=user_id)
         if conv is None:
             return None
 
@@ -133,7 +170,9 @@ class ChatService:
         return await self.get_conversation(conversation_id)
 
     async def delete_conversation(
-        self, conversation_id: str
+        self,
+        conversation_id: str,
+        user_id: Optional[str] = None,
     ) -> Optional[ConversationDeleteResponse]:
         """
         Delete a conversation and all its messages.
@@ -142,11 +181,12 @@ class ChatService:
 
         Args:
             conversation_id: The conversation UUID.
+            user_id: If provided, verifies ownership before deleting.
 
         Returns:
-            ConversationDeleteResponse if found, None if not found.
+            ConversationDeleteResponse if found, None if not found/not owned.
         """
-        conv = await self.get_conversation(conversation_id)
+        conv = await self.get_conversation(conversation_id, user_id=user_id)
         if conv is None:
             return None
 
@@ -161,19 +201,21 @@ class ChatService:
     # ── Messages ─────────────────────────────────────────────────────
 
     async def get_messages(
-        self, conversation_id: str
+        self, conversation_id: str,
+        user_id: Optional[str] = None,
     ) -> Optional[MessageListResponse]:
         """
         Get all messages in a conversation, ordered chronologically.
 
         Args:
             conversation_id: The conversation UUID.
+            user_id: If provided, verifies conversation ownership.
 
         Returns:
-            MessageListResponse if conversation exists, None otherwise.
+            MessageListResponse if conversation exists (and owned), None otherwise.
         """
-        # Verify conversation exists
-        conv = await self.get_conversation(conversation_id)
+        # Verify conversation exists (and is owned by user_id if given)
+        conv = await self.get_conversation(conversation_id, user_id=user_id)
         if conv is None:
             return None
 
@@ -314,12 +356,15 @@ class ChatService:
             created_at=updated["created_at"],
         )
 
-    async def get_analytics(self) -> AnalyticsResponse:
+    async def get_analytics(self, user_id: Optional[str] = None) -> AnalyticsResponse:
         """
-        Compute analytics across all conversations and documents.
+        Compute analytics for the current user (or globally if user_id is None).
 
         Works with both SQLite (native SQL aggregates) and Supabase PostgREST
         (client-side aggregation — fetches all rows and computes in Python).
+
+        Args:
+            user_id: If provided, limits analytics to this user's conversations.
 
         Returns:
             AnalyticsResponse with query counts, rating stats, and document breakdown.
@@ -328,7 +373,17 @@ class ChatService:
 
         if "Supabase" in db_class:
             # ── Supabase PostgREST: aggregate client-side ─────────────────
-            all_msgs = await self.db.fetch_all("SELECT * FROM messages")
+            if user_id:
+                # Get user's conversations first, then their messages
+                conv_rows = await self.db.fetch_all(
+                    "SELECT * FROM conversations WHERE user_id = ?", (user_id,)
+                )
+                conv_ids = {r["id"] for r in conv_rows}
+                all_msgs_raw = await self.db.fetch_all("SELECT * FROM messages")
+                all_msgs = [m for m in all_msgs_raw if m.get("conversation_id") in conv_ids]
+            else:
+                all_msgs = await self.db.fetch_all("SELECT * FROM messages")
+
             assistant_msgs = [m for m in all_msgs if m.get("role") == "assistant"]
 
             total_queries = len(assistant_msgs)
@@ -338,7 +393,12 @@ class ChatService:
             rated = thumbs_up + thumbs_down
             satisfaction_rate = round(thumbs_up / rated * 100) if rated > 0 else None
 
-            all_docs = await self.db.fetch_all("SELECT * FROM documents")
+            if user_id:
+                all_docs = await self.db.fetch_all(
+                    "SELECT * FROM documents WHERE user_id = ?", (user_id,)
+                )
+            else:
+                all_docs = await self.db.fetch_all("SELECT * FROM documents")
             docs = DocumentStatusCounts(
                 total=len(all_docs),
                 ready=sum(1 for d in all_docs if d.get("status") == "ready"),
@@ -371,16 +431,32 @@ class ChatService:
 
         else:
             # ── SQLite: native SQL aggregates ─────────────────────────────
-            row = await self.db.fetch_one(
-                """
-                SELECT
-                    SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END)                    AS total_queries,
-                    SUM(CASE WHEN role = 'assistant' AND rating =  1 THEN 1 ELSE 0 END)    AS thumbs_up,
-                    SUM(CASE WHEN role = 'assistant' AND rating = -1 THEN 1 ELSE 0 END)    AS thumbs_down,
-                    SUM(CASE WHEN role = 'assistant' AND rating IS NULL THEN 1 ELSE 0 END) AS no_rating
-                FROM messages
-                """
-            )
+            # For SQLite with user scoping, we use a subquery join approach
+            if user_id:
+                row = await self.db.fetch_one(
+                    """
+                    SELECT
+                        SUM(CASE WHEN m.role = 'assistant' THEN 1 ELSE 0 END)                    AS total_queries,
+                        SUM(CASE WHEN m.role = 'assistant' AND m.rating =  1 THEN 1 ELSE 0 END)  AS thumbs_up,
+                        SUM(CASE WHEN m.role = 'assistant' AND m.rating = -1 THEN 1 ELSE 0 END)  AS thumbs_down,
+                        SUM(CASE WHEN m.role = 'assistant' AND m.rating IS NULL THEN 1 ELSE 0 END) AS no_rating
+                    FROM messages m
+                    JOIN conversations c ON m.conversation_id = c.id
+                    WHERE c.user_id = ?
+                    """,
+                    (user_id,),
+                )
+            else:
+                row = await self.db.fetch_one(
+                    """
+                    SELECT
+                        SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END)                    AS total_queries,
+                        SUM(CASE WHEN role = 'assistant' AND rating =  1 THEN 1 ELSE 0 END)    AS thumbs_up,
+                        SUM(CASE WHEN role = 'assistant' AND rating = -1 THEN 1 ELSE 0 END)    AS thumbs_down,
+                        SUM(CASE WHEN role = 'assistant' AND rating IS NULL THEN 1 ELSE 0 END) AS no_rating
+                    FROM messages
+                    """
+                )
             total_queries = row["total_queries"] or 0 if row else 0
             thumbs_up     = row["thumbs_up"]     or 0 if row else 0
             thumbs_down   = row["thumbs_down"]   or 0 if row else 0
@@ -388,16 +464,29 @@ class ChatService:
             rated = thumbs_up + thumbs_down
             satisfaction_rate = round(thumbs_up / rated * 100) if rated > 0 else None
 
-            doc_row = await self.db.fetch_one(
-                """
-                SELECT
-                    COUNT(*) AS total,
-                    SUM(CASE WHEN status = 'ready'      THEN 1 ELSE 0 END) AS ready,
-                    SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing,
-                    SUM(CASE WHEN status = 'error'      THEN 1 ELSE 0 END) AS error
-                FROM documents
-                """
-            )
+            if user_id:
+                doc_row = await self.db.fetch_one(
+                    """
+                    SELECT
+                        COUNT(*) AS total,
+                        SUM(CASE WHEN status = 'ready'      THEN 1 ELSE 0 END) AS ready,
+                        SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing,
+                        SUM(CASE WHEN status = 'error'      THEN 1 ELSE 0 END) AS error
+                    FROM documents WHERE user_id = ?
+                    """,
+                    (user_id,),
+                )
+            else:
+                doc_row = await self.db.fetch_one(
+                    """
+                    SELECT
+                        COUNT(*) AS total,
+                        SUM(CASE WHEN status = 'ready'      THEN 1 ELSE 0 END) AS ready,
+                        SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing,
+                        SUM(CASE WHEN status = 'error'      THEN 1 ELSE 0 END) AS error
+                    FROM documents
+                    """
+                )
             docs = DocumentStatusCounts(
                 total=doc_row["total"] or 0,
                 ready=doc_row["ready"] or 0,

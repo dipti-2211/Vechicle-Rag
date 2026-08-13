@@ -25,10 +25,11 @@ import logging
 from datetime import date
 from typing import AsyncGenerator, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.auth.deps import get_current_user
 from app.models.database import get_database
 from app.models.schemas import (
     AnalyticsResponse,
@@ -88,7 +89,10 @@ class ConversationUpdateTitle(BaseModel):
         503: {"model": ErrorResponse},
     },
 )
-async def ask_question(body: ChatRequest) -> ChatResponse:
+async def ask_question(
+    body: ChatRequest,
+    user_id: Optional[str] = Depends(get_current_user),
+) -> ChatResponse:
     """
     RAG pipeline endpoint:
     1. Create or reuse a conversation
@@ -103,7 +107,7 @@ async def ask_question(body: ChatRequest) -> ChatResponse:
 
     # ── Step 1: Resolve conversation ──────────────────────────────────
     if body.conversation_id:
-        conv = await service.get_conversation(body.conversation_id)
+        conv = await service.get_conversation(body.conversation_id, user_id=user_id)
         if conv is None:
             raise HTTPException(
                 status_code=404,
@@ -113,7 +117,7 @@ async def ask_question(body: ChatRequest) -> ChatResponse:
         # Auto-create a conversation titled after the first question
         short_title = body.question[:60] + ("..." if len(body.question) > 60 else "")
         conv = await service.create_conversation(
-            ConversationCreate(title=short_title)
+            ConversationCreate(title=short_title), user_id=user_id
         )
 
     conversation_id = conv.id
@@ -126,7 +130,7 @@ async def ask_question(body: ChatRequest) -> ChatResponse:
     )
 
     # ── Step 3: Build conversation history for multi-turn context ─────
-    history_response = await service.get_messages(conversation_id)
+    history_response = await service.get_messages(conversation_id, user_id=user_id)
     history = []
     if history_response:
         for msg in history_response.messages[:-1]:  # Exclude the just-added user message
@@ -138,6 +142,7 @@ async def ask_question(body: ChatRequest) -> ChatResponse:
             question=body.question,
             conversation_history=history,
             document_ids=body.document_ids or None,
+            user_id=user_id,
         )
     except ValueError as e:
         # Gemini API key not configured
@@ -195,7 +200,10 @@ async def ask_question(body: ChatRequest) -> ChatResponse:
     ),
     response_class=StreamingResponse,
 )
-async def stream_question(body: ChatRequest) -> StreamingResponse:
+async def stream_question(
+    body: ChatRequest,
+    user_id: Optional[str] = Depends(get_current_user),
+) -> StreamingResponse:
     """
     Streaming RAG endpoint — yields SSE tokens, saves message to DB at end.
     """
@@ -204,14 +212,14 @@ async def stream_question(body: ChatRequest) -> StreamingResponse:
 
     # ── Step 1–3: Same conversation / history setup as /ask ────────────
     if body.conversation_id:
-        conv = await service.get_conversation(body.conversation_id)
+        conv = await service.get_conversation(body.conversation_id, user_id=user_id)
         if conv is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
         conversation_id = body.conversation_id
     else:
         short_title = body.question[:60] + ("..." if len(body.question) > 60 else "")
         conv = await service.create_conversation(
-            ConversationCreate(title=short_title)
+            ConversationCreate(title=short_title), user_id=user_id
         )
         conversation_id = conv.id
 
@@ -224,7 +232,7 @@ async def stream_question(body: ChatRequest) -> StreamingResponse:
     )
 
     # Build conversation history
-    history_resp = await service.get_messages(conversation_id)
+    history_resp = await service.get_messages(conversation_id, user_id=user_id)
     history = [
         {"role": m.role, "content": m.content}
         for m in history_resp.messages[:-1]  # exclude the message we just added
@@ -241,6 +249,7 @@ async def stream_question(body: ChatRequest) -> StreamingResponse:
                 question=body.question,
                 conversation_history=history,
                 document_ids=body.document_ids or None,
+                user_id=user_id,
             ):
                 # Parse done event to extract metadata
                 if sse_line.startswith("data: "):
@@ -306,10 +315,12 @@ async def stream_question(body: ChatRequest) -> StreamingResponse:
     summary="List all conversations",
     description="Returns all conversations, ordered by most recently updated.",
 )
-async def list_conversations() -> ConversationListResponse:
-    """List all conversations."""
+async def list_conversations(
+    user_id: Optional[str] = Depends(get_current_user),
+) -> ConversationListResponse:
+    """List all conversations for the current user."""
     service = _get_service()
-    return await service.list_conversations()
+    return await service.list_conversations(user_id=user_id)
 
 
 @router.post(
@@ -321,10 +332,11 @@ async def list_conversations() -> ConversationListResponse:
 )
 async def create_conversation(
     data: ConversationCreate = ConversationCreate(),
+    user_id: Optional[str] = Depends(get_current_user),
 ) -> ConversationResponse:
-    """Create a new conversation."""
+    """Create a new conversation (scoped to current user)."""
     service = _get_service()
-    return await service.create_conversation(data)
+    return await service.create_conversation(data, user_id=user_id)
 
 
 @router.get(
@@ -334,10 +346,13 @@ async def create_conversation(
     description="Returns details for a single conversation.",
     responses={404: {"model": ErrorResponse}},
 )
-async def get_conversation(conversation_id: str) -> ConversationResponse:
-    """Get a single conversation by ID."""
+async def get_conversation(
+    conversation_id: str,
+    user_id: Optional[str] = Depends(get_current_user),
+) -> ConversationResponse:
+    """Get a single conversation by ID (user-scoped)."""
     service = _get_service()
-    conv = await service.get_conversation(conversation_id)
+    conv = await service.get_conversation(conversation_id, user_id=user_id)
 
     if conv is None:
         raise HTTPException(
@@ -358,10 +373,11 @@ async def get_conversation(conversation_id: str) -> ConversationResponse:
 async def update_conversation_title(
     conversation_id: str,
     data: ConversationUpdateTitle,
+    user_id: Optional[str] = Depends(get_current_user),
 ) -> ConversationResponse:
-    """Update a conversation's title."""
+    """Update a conversation's title (user-scoped)."""
     service = _get_service()
-    conv = await service.update_conversation_title(conversation_id, data.title)
+    conv = await service.update_conversation_title(conversation_id, data.title, user_id=user_id)
 
     if conv is None:
         raise HTTPException(
@@ -379,10 +395,13 @@ async def update_conversation_title(
     description="Deletes a conversation and all its messages.",
     responses={404: {"model": ErrorResponse}},
 )
-async def delete_conversation(conversation_id: str) -> ConversationDeleteResponse:
-    """Delete a conversation and all its messages."""
+async def delete_conversation(
+    conversation_id: str,
+    user_id: Optional[str] = Depends(get_current_user),
+) -> ConversationDeleteResponse:
+    """Delete a conversation and all its messages (user-scoped)."""
     service = _get_service()
-    result = await service.delete_conversation(conversation_id)
+    result = await service.delete_conversation(conversation_id, user_id=user_id)
 
     if result is None:
         raise HTTPException(
@@ -402,10 +421,13 @@ async def delete_conversation(conversation_id: str) -> ConversationDeleteRespons
     description="Returns all messages in a conversation, ordered chronologically.",
     responses={404: {"model": ErrorResponse}},
 )
-async def get_messages(conversation_id: str) -> MessageListResponse:
-    """Get all messages in a conversation."""
+async def get_messages(
+    conversation_id: str,
+    user_id: Optional[str] = Depends(get_current_user),
+) -> MessageListResponse:
+    """Get all messages in a conversation (user-scoped)."""
     service = _get_service()
-    result = await service.get_messages(conversation_id)
+    result = await service.get_messages(conversation_id, user_id=user_id)
 
     if result is None:
         raise HTTPException(
@@ -461,10 +483,12 @@ async def rate_message(message_id: str, body: RatingUpdate) -> MessageResponse:
         "satisfaction rate, document status breakdown, and top cited documents."
     ),
 )
-async def get_analytics() -> AnalyticsResponse:
-    """Return analytics across all conversations and documents."""
+async def get_analytics(
+    user_id: Optional[str] = Depends(get_current_user),
+) -> AnalyticsResponse:
+    """Return analytics for the current user's conversations and documents."""
     service = _get_service()
-    return await service.get_analytics()
+    return await service.get_analytics(user_id=user_id)
 
 
 # ── Export Endpoint ─────────────────────────────────────────────────────────────
@@ -479,7 +503,10 @@ async def get_analytics() -> AnalyticsResponse:
     response_class=StreamingResponse,
     responses={404: {"model": ErrorResponse}},
 )
-async def export_conversation(conversation_id: str) -> StreamingResponse:
+async def export_conversation(
+    conversation_id: str,
+    user_id: Optional[str] = Depends(get_current_user),
+) -> StreamingResponse:
     """
     Build a Markdown document from all messages in the conversation and
     return it as a file download.

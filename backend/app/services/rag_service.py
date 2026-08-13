@@ -73,6 +73,7 @@ class RagService:
         question: str,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         document_ids: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[str, List[SourceCitation]]:
         """
         Run the full RAG pipeline for a single question.
@@ -82,25 +83,31 @@ class RagService:
             conversation_history: Optional prior messages for context
                                   [{role: "user"|"assistant", content: "..."}]
             document_ids: Optional list of document IDs to scope the search.
-                          If None, searches across all indexed documents.
+                          If None, searches across all documents for this user.
+            user_id: The authenticated user's UUID — used to scope ChromaDB retrieval.
 
         Returns:
             (answer_text, source_citations) tuple.
         """
         logger.info("RAG pipeline starting for question: '%s'", question[:80])
 
-        # ── Step 1: Retrieve ─────────────────────────────────────────
+        # ── Step 1: Retrieve ───────────────────────────────────────────────
         vector_store = self._get_vector_store()
         top_k = self.settings.top_k_results
-        chunks = vector_store.search(question, top_k=top_k, document_ids=document_ids)
+        chunks = vector_store.search(
+            question, top_k=top_k, document_ids=document_ids, user_id=user_id
+        )
         if document_ids:
             logger.info(
-                "Retrieved %d chunks scoped to %d document(s).",
+                "Retrieved %d chunks scoped to %d document(s) for user=%s.",
                 len(chunks),
                 len(document_ids),
+                user_id or "anon",
             )
         else:
-            logger.info("Retrieved %d chunks from all documents.", len(chunks))
+            logger.info(
+                "Retrieved %d chunks for user=%s.", len(chunks), user_id or "anon"
+            )
 
         # ── Step 2: Build sources for citation ───────────────────────
         sources = self._build_citations(chunks)
@@ -123,6 +130,7 @@ class RagService:
         question: str,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         document_ids: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Streaming version of answer() — yields Server-Sent Event strings.
@@ -137,14 +145,16 @@ class RagService:
             question: The user's natural language question.
             conversation_history: Optional prior turns for multi-turn context.
             document_ids: Optional list of document IDs to scope the search.
+            user_id: The authenticated user's UUID — used to scope ChromaDB retrieval.
 
         Yields:
             SSE-formatted strings (each ending with double newline).
         """
-        # ── Step 1: Retrieve ─────────────────────────────────────────
+        # ── Step 1: Retrieve ──────────────────────────────────────────────────
         vector_store = self._get_vector_store()
         chunks = vector_store.search(
-            question, top_k=self.settings.top_k_results, document_ids=document_ids
+            question, top_k=self.settings.top_k_results, document_ids=document_ids,
+            user_id=user_id
         )
         sources = self._build_citations(chunks)
 

@@ -3,12 +3,14 @@ Vehicle Intelligence Assistant — Document Routes
 
 REST API endpoints for document management:
 - POST   /api/documents          → Upload a document (triggers background processing)
-- GET    /api/documents          → List all documents
+- GET    /api/documents          → List all documents (scoped to current user)
 - GET    /api/documents/{id}     → Get a single document
 - DELETE /api/documents/{id}     → Delete a document + vectors
 
 Background Pipeline (triggered after upload):
   Save locally → upload to Supabase Storage → parse → chunk → embed → persist chunks → mark READY
+
+All endpoints are user-scoped: documents are isolated per authenticated user.
 """
 
 import asyncio
@@ -18,8 +20,9 @@ from pathlib import Path
 from typing import Optional
 
 import aiofiles
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, UploadFile, File, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File, status
 
+from app.auth.deps import get_current_user
 from app.config import get_settings
 from app.models.database import get_database
 from app.models.schemas import (
@@ -68,6 +71,7 @@ async def _process_document(
     file_type: str,
     original_filename: str,
     storage_path: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> None:
     """
     Background task: upload to Supabase Storage → parse → chunk → embed →
@@ -81,11 +85,15 @@ async def _process_document(
         file_type: File extension without dot (pdf, csv, xlsx, docx, txt).
         original_filename: Original filename for metadata.
         storage_path: Supabase Storage path if already uploaded (may be None).
+        user_id: Owner's UUID — included in chunk metadata for user-scoped retrieval.
     """
     settings = get_settings()
     service = _get_service()
 
-    logger.info("Background pipeline started for document %s (%s)", doc_id, original_filename)
+    logger.info(
+        "Background pipeline started for document %s (%s) user=%s",
+        doc_id, original_filename, user_id or "anon",
+    )
 
     try:
         # ── Step 0: Upload to Supabase Storage (if not done yet) ──────
@@ -139,10 +147,12 @@ async def _process_document(
             "original_filename": original_filename,
             "file_type": file_type,
         }
+        # user_id is passed so chunks are tagged with the owner's ID in ChromaDB
         vector_store.add_chunks(
             document_id=doc_id,
             chunks=chunks,
             metadata=chunk_metadata,
+            user_id=user_id,
         )
 
         # ── Step 3.5: Persist chunks to Supabase for restart recovery ──
@@ -205,6 +215,7 @@ async def _process_document(
 async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    user_id: Optional[str] = Depends(get_current_user),
 ) -> DocumentResponse:
     """Handle document upload, save file, create DB record, and trigger processing."""
     settings = get_settings()
@@ -249,7 +260,7 @@ async def upload_document(
         file_path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail="Failed to save the uploaded file.")
 
-    # Create the database record (status='processing')
+    # Create the database record (status='processing'), tagged with user_id
     try:
         doc = await service.create_document_record(
             original_filename=file.filename,
@@ -257,6 +268,7 @@ async def upload_document(
             file_size=size,
             file_path=str(file_path),
             doc_id=doc_id,
+            user_id=user_id,
         )
     except Exception as e:
         logger.error("Error creating document record: %s", e)
@@ -272,6 +284,7 @@ async def upload_document(
         file_type=file_type,
         original_filename=file.filename,
         storage_path=None,
+        user_id=user_id,
     )
 
     logger.info("Upload accepted for %s (%s). Background processing queued.", doc_id, file.filename)
@@ -284,17 +297,19 @@ async def upload_document(
     summary="Get document statistics",
     description="Returns aggregate statistics: total, ready, processing, and error counts, plus total chunks and storage used.",
 )
-async def get_document_stats() -> DocumentStats:
-    """Get aggregate document statistics for the Dashboard."""
+async def get_document_stats(
+    user_id: Optional[str] = Depends(get_current_user),
+) -> DocumentStats:
+    """Get aggregate document statistics for the current user."""
     service = _get_service()
-    return await service.get_document_stats()
+    return await service.get_document_stats(user_id=user_id)
 
 
 @router.get(
     "",
     response_model=DocumentListResponse,
     summary="List all documents",
-    description="Returns all uploaded documents, optionally filtered by status or file type.",
+    description="Returns all uploaded documents for the current user, optionally filtered by status or file type.",
 )
 async def list_documents(
     status: Optional[str] = Query(
@@ -307,10 +322,11 @@ async def list_documents(
         description="Filter by file type: pdf, csv, xlsx, docx, or txt",
         pattern="^(pdf|csv|xlsx|docx|txt)$",
     ),
+    user_id: Optional[str] = Depends(get_current_user),
 ) -> DocumentListResponse:
-    """List all documents with optional filters."""
+    """List documents for the current user with optional filters."""
     service = _get_service()
-    return await service.list_documents(status=status, file_type=file_type)
+    return await service.list_documents(status=status, file_type=file_type, user_id=user_id)
 
 
 @router.get(
@@ -339,10 +355,13 @@ async def get_document_status(document_id: str) -> DocumentStatusResponse:
     description="Returns details for a single document by its ID.",
     responses={404: {"model": ErrorResponse}},
 )
-async def get_document(document_id: str) -> DocumentResponse:
-    """Get a single document by ID."""
+async def get_document(
+    document_id: str,
+    user_id: Optional[str] = Depends(get_current_user),
+) -> DocumentResponse:
+    """Get a single document by ID (user-scoped)."""
     service = _get_service()
-    doc = await service.get_document(document_id)
+    doc = await service.get_document(document_id, user_id=user_id)
 
     if doc is None:
         raise HTTPException(
@@ -360,12 +379,15 @@ async def get_document(document_id: str) -> DocumentResponse:
     description="Deletes a document, its stored file, Supabase Storage file, and all associated vector embeddings.",
     responses={404: {"model": ErrorResponse}},
 )
-async def delete_document(document_id: str) -> DocumentDeleteResponse:
+async def delete_document(
+    document_id: str,
+    user_id: Optional[str] = Depends(get_current_user),
+) -> DocumentDeleteResponse:
     """Delete a document, its file on disk, Supabase Storage file, and its vectors in ChromaDB."""
     service = _get_service()
 
-    # Confirm the document exists before any deletion
-    doc = await service.get_document(document_id)
+    # Confirm the document exists (and belongs to this user)
+    doc = await service.get_document(document_id, user_id=user_id)
     if doc is None:
         raise HTTPException(
             status_code=404,
@@ -396,7 +418,7 @@ async def delete_document(document_id: str) -> DocumentDeleteResponse:
         logger.warning("Could not delete Supabase Storage file for %s: %s", document_id, e)
 
     # 3. Delete file from disk + record from database
-    result = await service.delete_document(document_id)
+    result = await service.delete_document(document_id, user_id=user_id)
     if result is None:
         raise HTTPException(
             status_code=404,
@@ -418,7 +440,10 @@ async def delete_document(document_id: str) -> DocumentDeleteResponse:
     ),
     responses={404: {"model": ErrorResponse}},
 )
-async def preview_document(document_id: str) -> DocumentPreviewResponse:
+async def preview_document(
+    document_id: str,
+    user_id: Optional[str] = Depends(get_current_user),
+) -> DocumentPreviewResponse:
     """
     Parse the stored file and return a content preview.
     Re-uses DocumentParser so the result matches what's in the vector store.
@@ -426,7 +451,7 @@ async def preview_document(document_id: str) -> DocumentPreviewResponse:
     PREVIEW_CHARS = 800
 
     service = _get_service()
-    doc = await service.get_document(document_id)
+    doc = await service.get_document(document_id, user_id=user_id)
     if doc is None:
         raise HTTPException(
             status_code=404,

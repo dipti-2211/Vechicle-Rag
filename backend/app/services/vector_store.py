@@ -105,6 +105,7 @@ class VectorStore:
         document_id: str,
         chunks: List[str],
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Embed and insert document chunks into ChromaDB.
@@ -113,6 +114,7 @@ class VectorStore:
             document_id: UUID of the parent document.
             chunks: List of text chunks to embed and store.
             metadata: Optional base metadata attached to every chunk.
+            user_id: Owner's UUID — stored in metadata for per-user retrieval scoping.
         """
         if not chunks:
             logger.warning("add_chunks called with empty chunk list for doc %s", document_id)
@@ -135,8 +137,10 @@ class VectorStore:
         # Build per-chunk IDs and metadata
         ids = [f"{document_id}_{i}" for i in range(len(chunks))]
         base_meta = metadata or {}
+        # Include user_id in metadata so we can filter by user during retrieval
+        user_meta = {"user_id": user_id} if user_id else {}
         metadatas = [
-            {**base_meta, "document_id": document_id, "chunk_index": i}
+            {**base_meta, **user_meta, "document_id": document_id, "chunk_index": i}
             for i in range(len(chunks))
         ]
 
@@ -151,7 +155,7 @@ class VectorStore:
             metadatas=metadatas,
             documents=chunks,
         )
-        logger.info("Insertion complete for document %s.", document_id)
+        logger.info("Insertion complete for document %s (user=%s).", document_id, user_id or "anon")
 
     def delete_chunks(self, document_id: str) -> int:
         """
@@ -187,6 +191,7 @@ class VectorStore:
         query: str,
         top_k: int = 5,
         document_ids: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Semantic search over stored chunks using Gemini embeddings.
@@ -195,6 +200,8 @@ class VectorStore:
             query: The natural language query.
             top_k: Maximum number of results to return.
             document_ids: Optional list of document IDs to scope the search.
+            user_id: If provided, restricts retrieval to chunks owned by this user.
+                     This is the primary mechanism for per-user RAG isolation.
 
         Returns:
             List of dicts: [{text, metadata, distance}, ...]
@@ -206,11 +213,22 @@ class VectorStore:
             logger.info("Vector store is empty — no results for query.")
             return []
 
-        logger.info("Searching vector store for: '%s'", query)
+        logger.info("Searching vector store for: '%s' (user=%s)", query, user_id or "anon")
         query_embedding = self._get_embeddings([query])[0]
 
         where_filter: Optional[Dict[str, Any]] = None
-        if document_ids:
+
+        # Build ChromaDB where filter — user_id takes precedence for isolation
+        if user_id and document_ids:
+            # Scope to user AND specific documents
+            if len(document_ids) == 1:
+                where_filter = {"$and": [{"user_id": user_id}, {"document_id": document_ids[0]}]}
+            else:
+                where_filter = {"$and": [{"user_id": user_id}, {"document_id": {"$in": document_ids}}]}
+        elif user_id:
+            # Scope to user's entire knowledge base
+            where_filter = {"user_id": user_id}
+        elif document_ids:
             if len(document_ids) == 1:
                 where_filter = {"document_id": document_ids[0]}
             else:

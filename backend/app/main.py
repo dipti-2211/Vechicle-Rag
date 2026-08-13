@@ -29,6 +29,7 @@ from app.models.database import init_database, close_database, get_database, set
 from app.models.schemas import HealthResponse
 from app.routes import documents as document_routes
 from app.routes import chat as chat_routes
+from app.routes import auth as auth_routes
 from app.services.document_service import DocumentService
 from app.utils.logging import setup_logging, get_logger
 
@@ -167,6 +168,7 @@ async def lifespan(app: FastAPI):
                             file_type=file_type,
                             original_filename=original_filename,
                             storage_path=row.get("storage_path"),
+                            user_id=row.get("user_id"),  # preserve ownership if available
                         )
                     )
                 else:
@@ -304,6 +306,11 @@ def create_app() -> FastAPI:
         chat_routes.router,
         prefix="/api/chat",
         tags=["Chat"],
+    )
+    app.include_router(
+        auth_routes.router,
+        prefix="/api/auth",
+        tags=["Auth"],
     )
 
     return app

@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # ── Supabase ─────────────────────────────────────────────────────
     supabase_url: str = ""
     supabase_service_role_key: str = ""
+    # JWT secret for verifying Supabase-issued access tokens on the backend.
+    # Find it in: Supabase Dashboard → Auth → Signing Keys → JWT Secret
+    supabase_jwt_secret: str = ""
     supabase_storage_bucket: str = "documents"
 
     # ── File Upload ──────────────────────────────────────────────────
