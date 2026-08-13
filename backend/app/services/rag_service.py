@@ -250,7 +250,7 @@ class RagService:
 
             # Run the synchronous Gemini SDK call in a thread pool
             # so we don't block the async event loop.
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
                 None,
                 lambda: client.models.generate_content(
@@ -304,7 +304,7 @@ class RagService:
             )
 
             # Gemini's generate_content_stream is synchronous — run in thread pool
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             response_iter = await loop.run_in_executor(
                 None,
                 lambda: client.models.generate_content_stream(

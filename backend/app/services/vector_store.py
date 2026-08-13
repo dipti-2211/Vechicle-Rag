@@ -2,14 +2,17 @@
 Vehicle Intelligence Assistant — Vector Store Service
 
 Manages ChromaDB for vector storage and semantic retrieval.
-Uses sentence-transformers (all-MiniLM-L6-v2) locally for embeddings —
-no external API needed for indexing, keeping costs zero.
+Uses Google Gemini API (gemini-embedding-001) for embeddings —
+zero local model memory, no sentence-transformers download required.
 
-Responsibilities:
-- Generate embeddings for document chunks
-- Store chunks in ChromaDB with metadata
-- Semantic search over stored chunks
-- Delete all chunks for a given document
+This replaces the previous sentence-transformers (all-MiniLM-L6-v2) implementation
+to fit within Render's 512 MB free-tier memory limit.
+
+Embedding dimensions: 3072 (Gemini gemini-embedding-001 default)
+Distance metric: cosine similarity
+
+Public interface is UNCHANGED — all callers (routes, rag_service, chunk_store) work
+without modification.
 """
 
 import logging
@@ -17,35 +20,49 @@ from typing import Any, Dict, List, Optional
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
-from sentence_transformers import SentenceTransformer
+from google import genai
 
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# Gemini embedding dimension for gemini-embedding-001
+GEMINI_EMBEDDING_DIM = 3072
+
 
 class VectorStore:
-    """Service to handle embedding generation and vector storage in ChromaDB."""
+    """Service to handle embedding generation and vector storage in ChromaDB.
+
+    Uses Gemini API for embeddings (no local model loaded — zero extra RAM).
+    ChromaDB is used as the vector index (persistent on disk).
+    """
 
     def __init__(self) -> None:
         self.settings = get_settings()
 
-        # 1. Load the local embedding model (downloaded once, cached after that).
-        #    all-MiniLM-L6-v2 produces 384-dim vectors, excellent for semantic search.
-        logger.info("Loading embedding model all-MiniLM-L6-v2...")
-        self.embedding_model = SentenceTransformer(
-            "all-MiniLM-L6-v2",
-            # Allow download if not cached — falls back to network on first run
+        # ── Gemini client (lightweight — just an HTTP client, no local model) ──
+        api_key = self.settings.gemini_api_key
+        if not api_key:
+            raise ValueError(
+                "GEMINI_API_KEY is required for embeddings. "
+                "Set it in your .env file or Render environment variables."
+            )
+        self._gemini_client = genai.Client(api_key=api_key)
+        self._embedding_model = self.settings.gemini_embedding_model
+        logger.info(
+            "VectorStore: using Gemini API for embeddings (model=%s, dim=%d)",
+            self._embedding_model,
+            GEMINI_EMBEDDING_DIM,
         )
 
-        # 2. Initialize a persistent ChromaDB client (data survives restarts).
+        # ── ChromaDB (persistent, survives restarts via mounted disk) ──────────
         logger.info("Initializing ChromaDB at %s", self.settings.chroma_persist_dir)
         self.chroma_client = chromadb.PersistentClient(
             path=self.settings.chroma_persist_dir,
             settings=ChromaSettings(anonymized_telemetry=False),
         )
 
-        # 3. Get or create the collection with cosine similarity (best for MiniLM).
+        # Collection uses cosine distance — compatible with Gemini vectors
         self.collection = self.chroma_client.get_or_create_collection(
             name=self.settings.chroma_collection_name,
             metadata={"hnsw:space": "cosine"},
@@ -56,17 +73,32 @@ class VectorStore:
             self.collection.count(),
         )
 
-    # ── Private helpers ───────────────────────────────────────────────
+    # ── Private helpers ───────────────────────────────────────────────────────
 
     def _get_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """Generate vector embeddings for a list of texts."""
+        """
+        Generate vector embeddings for a list of texts using Gemini API.
+
+        Args:
+            texts: List of text strings to embed.
+
+        Returns:
+            List of embedding vectors (each is a list of floats).
+        """
         if not texts:
             return []
-        # SentenceTransformer returns a numpy array → convert to plain Python list
-        embeddings = self.embedding_model.encode(texts, show_progress_bar=False)
-        return embeddings.tolist()
 
-    # ── Public API ───────────────────────────────────────────────────
+        try:
+            result = self._gemini_client.models.embed_content(
+                model=self._embedding_model,
+                contents=texts,
+            )
+            return [list(e.values) for e in result.embeddings]
+        except Exception as e:
+            logger.error("Gemini embedding API call failed: %s", e)
+            raise RuntimeError(f"Embedding generation failed: {e}") from e
+
+    # ── Public API ────────────────────────────────────────────────────────────
 
     def add_chunks(
         self,
@@ -80,19 +112,25 @@ class VectorStore:
         Args:
             document_id: UUID of the parent document.
             chunks: List of text chunks to embed and store.
-            metadata: Optional base metadata attached to every chunk
-                      (e.g. filename, file_type).
+            metadata: Optional base metadata attached to every chunk.
         """
         if not chunks:
             logger.warning("add_chunks called with empty chunk list for doc %s", document_id)
             return
 
         logger.info(
-            "Generating embeddings for %d chunks of document %s...",
+            "Generating Gemini embeddings for %d chunks of document %s...",
             len(chunks),
             document_id,
         )
-        embeddings = self._get_embeddings(chunks)
+
+        # Embed in batches of 100 to stay within Gemini API limits
+        batch_size = 100
+        all_embeddings: List[List[float]] = []
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i : i + batch_size]
+            batch_embeddings = self._get_embeddings(batch)
+            all_embeddings.extend(batch_embeddings)
 
         # Build per-chunk IDs and metadata
         ids = [f"{document_id}_{i}" for i in range(len(chunks))]
@@ -109,7 +147,7 @@ class VectorStore:
         )
         self.collection.add(
             ids=ids,
-            embeddings=embeddings,
+            embeddings=all_embeddings,
             metadatas=metadatas,
             documents=chunks,
         )
@@ -119,17 +157,13 @@ class VectorStore:
         """
         Remove all vector chunks belonging to a document from ChromaDB.
 
-        Args:
-            document_id: UUID of the document whose chunks should be deleted.
-
         Returns:
             Number of chunks deleted.
         """
         try:
-            # Query how many chunks exist for this document
             existing = self.collection.get(
                 where={"document_id": document_id},
-                include=[],  # Only return IDs
+                include=[],
             )
             ids_to_delete = existing.get("ids", [])
 
@@ -155,7 +189,7 @@ class VectorStore:
         document_ids: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Semantic search over stored chunks.
+        Semantic search over stored chunks using Gemini embeddings.
 
         Args:
             query: The natural language query.
@@ -164,12 +198,10 @@ class VectorStore:
 
         Returns:
             List of dicts: [{text, metadata, distance}, ...]
-            Lower distance = more similar (cosine distance).
         """
         if not query.strip():
             return []
 
-        # Guard: if collection is empty, return early to avoid ChromaDB error
         if self.collection.count() == 0:
             logger.info("Vector store is empty — no results for query.")
             return []
@@ -177,7 +209,6 @@ class VectorStore:
         logger.info("Searching vector store for: '%s'", query)
         query_embedding = self._get_embeddings([query])[0]
 
-        # Build optional where-filter for document scoping
         where_filter: Optional[Dict[str, Any]] = None
         if document_ids:
             if len(document_ids) == 1:
@@ -185,7 +216,6 @@ class VectorStore:
             else:
                 where_filter = {"document_id": {"$in": document_ids}}
 
-        # Clamp top_k to available count to avoid ChromaDB errors
         available = self.collection.count()
         n_results = min(top_k, available)
         if n_results == 0:
@@ -199,8 +229,6 @@ class VectorStore:
                 include=["documents", "metadatas", "distances"],
             )
         except Exception as query_err:
-            # ChromaDB raises when n_results > number of matching documents for a where_filter.
-            # Retry with n_results=1 (minimum valid value) to safely recover.
             logger.warning(
                 "ChromaDB query failed (n_results=%d, filter=%s): %s. Retrying with n_results=1.",
                 n_results, where_filter, query_err,

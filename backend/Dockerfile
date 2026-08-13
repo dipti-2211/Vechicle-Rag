@@ -11,8 +11,7 @@
 FROM python:3.11-slim AS builder
 
 # System dependencies required to compile Python packages:
-#   gcc / g++ / build-essential  — C extension compilation
-#   libgomp1                     — OpenMP (sentence-transformers / onnxruntime)
+#   gcc / g++ / build-essential  — C extension compilation (chromadb, etc.)
 #   libglib2.0-0                 — chromadb hnswlib dependency
 #   libsm6 / libxext6            — PDF processing libraries
 #   curl                         — health check
@@ -20,7 +19,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     build-essential \
-    libgomp1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
@@ -32,17 +30,8 @@ WORKDIR /build
 # Copy requirements first — this layer is cached until requirements.txt changes
 COPY requirements.txt .
 
-# ── Step 1: Install CPU-only PyTorch FIRST ───────────────────────────────────
-# This MUST happen before sentence-transformers to prevent pip from pulling
-# the CUDA-enabled default torch wheels (~3GB) which will fail or OOM on Render.
-# Using the official PyTorch CPU index for smaller, faster builds.
-RUN pip install --no-cache-dir \
-    "torch==2.13.0" \
-    --index-url https://download.pytorch.org/whl/cpu
-
-# ── Step 2: Install remaining app requirements ────────────────────────────────
-# sentence-transformers will detect torch is already installed (CPU version)
-# and won't try to reinstall it.
+# Install all app requirements
+# (PyTorch / sentence-transformers are no longer in requirements.txt)
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
@@ -50,7 +39,6 @@ FROM python:3.11-slim AS runtime
 
 # Runtime-only system libraries (no compilers needed at runtime)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgomp1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
@@ -82,8 +70,8 @@ ENV PYTHONUNBUFFERED=1 \
 EXPOSE 8000
 
 # ── Health Check ──────────────────────────────────────────────────────────────
-# 120s start period allows time for ML model download on first boot
-HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=3 \
+# 30s start period is enough — no ML model download needed at startup
+HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # ── Start Application ─────────────────────────────────────────────────────────

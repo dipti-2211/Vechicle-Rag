@@ -40,9 +40,10 @@ google-genai==1.14.0
 chromadb==1.5.9
 
 # ── Embeddings ────────────────────────────────────────────────────────────────
-# torch is installed as CPU-only BEFORE this in Dockerfile
-# (see Dockerfile for the --index-url https://download.pytorch.org/whl/cpu step)
-sentence-transformers==5.6.1
+# Embeddings are now generated via the Gemini API (gemini-embedding-001).
+# sentence-transformers and torch are NOT needed — they consumed ~472MB RAM,
+# causing OOM on Render's 512MB free-tier instance.
+# google-genai (already listed above) provides the embedding client.
 
 # ── Text Splitting ────────────────────────────────────────────────────────────
 langchain-text-splitters==1.1.2

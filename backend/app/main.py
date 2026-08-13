@@ -13,6 +13,7 @@ Configures:
 - Route registrations
 """
 
+import asyncio
 import logging
 import traceback
 from contextlib import asynccontextmanager
@@ -129,36 +130,11 @@ async def lifespan(app: FastAPI):
         except Exception as sc_err:
             logger.warning("Supabase Storage warmup: %s", sc_err)
 
-    # ── VectorStore warm-up ───────────────────────────────────────────
-    vector_store_instance = None
-    try:
-        from app.routes.documents import _get_vector_store
-        logger.info("Pre-loading embedding model and ChromaDB...")
-        vector_store_instance = _get_vector_store()
-        logger.info(
-            "✅ VectorStore ready (%d vectors in collection).",
-            vector_store_instance.get_collection_count(),
-        )
-    except Exception as vs_err:
-        logger.error("VectorStore failed to initialize: %s", vs_err)
-
-    # ── ChromaDB rebuild from persistent storage (if empty) ───────────
-    if vector_store_instance is not None:
-        try:
-            db = get_database()
-            from app.services.chunk_store import rebuild_chromadb_from_supabase
-            rebuilt = await rebuild_chromadb_from_supabase(db, vector_store_instance)
-            if rebuilt > 0:
-                logger.info(
-                    "✅ ChromaDB rebuilt: %d documents reloaded from persistent storage.",
-                    rebuilt,
-                )
-        except Exception as rebuild_err:
-            logger.warning("ChromaDB rebuild skipped: %s", rebuild_err)
-
     # ── Startup recovery: handle documents stuck in 'processing' ─────
     # On Render free-tier, background tasks are lost when the instance sleeps/restarts.
     # On startup, we find any stuck 'processing' docs and either retry or mark as error.
+    # NOTE: VectorStore is NOT pre-loaded here — it is lazy-initialized on first request
+    # to avoid loading the embedding model (Gemini API client) unnecessarily at startup.
     try:
         db = get_database()
         stuck_rows = await db.fetch_all(
@@ -184,8 +160,7 @@ async def lifespan(app: FastAPI):
                         doc_id, original_filename,
                     )
                     from app.routes.documents import _process_document
-                    import asyncio as _asyncio
-                    _asyncio.create_task(
+                    asyncio.create_task(
                         _process_document(
                             doc_id=doc_id,
                             file_path=file_path,
@@ -210,7 +185,6 @@ async def lifespan(app: FastAPI):
                     )
     except Exception as recovery_err:
         logger.error("Startup recovery failed: %s", recovery_err)
-
 
     yield
 
