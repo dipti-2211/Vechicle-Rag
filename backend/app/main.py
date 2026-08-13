@@ -3,12 +3,14 @@ Vehicle Intelligence Assistant — FastAPI Application Entry Point
 
 Configures:
 - CORS middleware for frontend access
-- Error handling middleware for structured error responses
-- Database lifecycle (Supabase PostgreSQL in production, SQLite locally)
+- Error handling for structured error responses
+- Database lifecycle:
+    Production → Supabase PostgreSQL (PostgREST via supabase-py)
+    Local dev   → SQLite (when SUPABASE_URL is not set)
 - Supabase Storage initialization
-- ChromaDB vector index rebuild from Supabase chunks on startup
-- Health check endpoint with live stats
-- All API route registrations
+- ChromaDB vector index rebuild from persistent chunks on startup
+- Health check endpoint
+- Route registrations
 """
 
 import logging
@@ -31,32 +33,22 @@ from app.utils.logging import setup_logging, get_logger
 
 logger = get_logger(__name__)
 
-# Track Supabase status for health check
-_supabase_ok: bool = False
-_db_type: str = "sqlite"
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Application lifespan manager.
+    Application lifespan: startup → yield → shutdown.
 
-    Startup:
-      1. Initialize logging
-      2. Initialize database (Supabase PostgreSQL if configured, else SQLite)
-      3. Upload directory setup
-      4. Supabase Storage client initialization
-      5. VectorStore warm-up (loads embedding model)
-      6. ChromaDB rebuild from Supabase if collection is empty
-
-    Shutdown:
-      - Close database connection
+    Startup order:
+      1. Logging
+      2. Database (Supabase PostgREST or SQLite)
+      3. Supabase Storage warmup
+      4. VectorStore / embedding model
+      5. ChromaDB rebuild from persistent chunks (if collection is empty)
     """
-    global _supabase_ok, _db_type
     settings = get_settings()
-
-    # ── Startup ──────────────────────────────────────────────────────
     setup_logging(debug=settings.debug)
+
     logger.info(
         "Starting %s v%s [env=%s]",
         settings.app_name,
@@ -64,67 +56,66 @@ async def lifespan(app: FastAPI):
         settings.app_env,
     )
 
-    # Ensure local upload directory exists (fallback even with Supabase Storage)
+    # Ensure local upload directory always exists (fallback storage)
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
 
     # ── Database initialization ───────────────────────────────────────
     if settings.supabase_configured:
-        logger.info("Supabase configured — initializing PostgreSQL database...")
+        logger.info("Supabase configured — connecting via PostgREST...")
         try:
-            from app.models.supabase_database import init_supabase_database
-            # Build the PostgreSQL connection string from Supabase URL
-            # Supabase direct connection: postgresql://postgres.[project-ref]:[password]@aws-0-*.pooler.supabase.com:5432/postgres
-            # We derive it from SUPABASE_URL and SERVICE_ROLE_KEY per Supabase docs convention.
-            # The caller must set SUPABASE_DB_URL explicitly (direct connection string) OR
-            # we fall back to SQLite and warn.
-            db_url = settings.supabase_db_url if hasattr(settings, 'supabase_db_url') and settings.supabase_db_url else ""
+            from supabase import create_client
+            from app.models.supabase_database import init_supabase_database_sync
 
-            if db_url:
-                sb_db = await init_supabase_database(db_url)
-                set_database(sb_db)
-                _db_type = "supabase_postgresql"
-                _supabase_ok = True
-                logger.info("✅ Supabase PostgreSQL database initialized.")
-            else:
-                # Supabase Storage is configured but no direct DB URL —
-                # use SQLite locally and Supabase Storage for files only.
-                logger.warning(
-                    "SUPABASE_DB_URL not set. Falling back to SQLite for metadata. "
-                    "Set SUPABASE_DB_URL to enable full Supabase PostgreSQL persistence."
-                )
-                Path(settings.database_path).parent.mkdir(parents=True, exist_ok=True)
-                await init_database(settings.database_path)
-                _db_type = "sqlite_with_supabase_storage"
-                _supabase_ok = True  # storage still works
-                logger.info("SQLite initialized at: %s", settings.database_path)
+            sb_client = create_client(
+                settings.supabase_url,
+                settings.supabase_service_role_key,
+            )
+
+            # ── Connectivity probe ─────────────────────────────────────
+            # Do a lightweight real request to catch invalid keys immediately
+            # (create_client is lazy and doesn't validate the key itself).
+            import asyncio
+            loop = asyncio.get_event_loop()
+            probe_result = await loop.run_in_executor(
+                None,
+                lambda: sb_client.table("documents").select("id").limit(1).execute()
+            )
+            logger.info("✅ Supabase probe succeeded (%d rows).", len(probe_result.data))
+
+            sb_db = init_supabase_database_sync(sb_client)
+            await sb_db.connect()
+            set_database(sb_db)
+            logger.info("✅ Supabase PostgREST database ready.")
 
         except Exception as db_err:
-            logger.error("Supabase DB init failed: %s — falling back to SQLite", db_err)
+            err_str = str(db_err)
+            if "Invalid API key" in err_str or "401" in err_str or "Unauthorized" in err_str:
+                logger.error(
+                    "⚠️  Supabase API key rejected — falling back to SQLite.\n"
+                    "   Check SUPABASE_SERVICE_ROLE_KEY is the legacy 'service_role' JWT (eyJ...), "
+                    "not the new 'sb_secret_...' format.\n"
+                    "   Get it from: Supabase Dashboard → Settings → API Keys → "
+                    "Legacy anon, service_role API keys tab.\n"
+                    "   Error: %s", err_str
+                )
+            else:
+                logger.error("Supabase DB init failed: %s — falling back to SQLite", db_err)
             Path(settings.database_path).parent.mkdir(parents=True, exist_ok=True)
             await init_database(settings.database_path)
-            _db_type = "sqlite_fallback"
+            logger.info("SQLite fallback initialized: %s", settings.database_path)
     else:
-        # Local development — use SQLite
-        logger.info("Supabase not configured — using SQLite database.")
+        logger.info("Supabase not configured — using SQLite (local dev mode).")
         Path(settings.database_path).parent.mkdir(parents=True, exist_ok=True)
         await init_database(settings.database_path)
-        _db_type = "sqlite"
-        logger.info("SQLite database initialized at: %s", settings.database_path)
+        logger.info("SQLite initialized: %s", settings.database_path)
 
-    # ── Environment validation ────────────────────────────────────────
-    _missing: list[str] = []
+    # ── Validate required env vars ────────────────────────────────────
     if not settings.gemini_api_key:
-        _missing.append("GEMINI_API_KEY")
-    if not settings.gemini_llm_model:
-        _missing.append("GEMINI_MODEL")
-    if _missing:
         logger.critical(
-            "⚠️  MISSING REQUIRED ENVIRONMENT VARIABLES: %s\n"
-            "   RAG query features will NOT work until this is fixed.",
-            ", ".join(_missing),
+            "⚠️  GEMINI_API_KEY is not set — chat/RAG features will NOT work."
         )
     else:
-        logger.info("✅ Environment validated — all required variables present.")
+        logger.info("✅ GEMINI_API_KEY is set.")
 
     # ── Supabase Storage client warmup ────────────────────────────────
     if settings.supabase_configured:
@@ -132,9 +123,12 @@ async def lifespan(app: FastAPI):
             from app.services.supabase_client import get_supabase_client
             sc = get_supabase_client()
             if sc:
-                logger.info("✅ Supabase Storage client ready (bucket: %s).", settings.supabase_storage_bucket)
+                logger.info(
+                    "✅ Supabase Storage client ready (bucket: %s).",
+                    settings.supabase_storage_bucket,
+                )
         except Exception as sc_err:
-            logger.warning("Supabase Storage client init warning: %s", sc_err)
+            logger.warning("Supabase Storage warmup: %s", sc_err)
 
     # ── VectorStore warm-up ───────────────────────────────────────────
     vector_store_instance = None
@@ -149,7 +143,7 @@ async def lifespan(app: FastAPI):
     except Exception as vs_err:
         logger.error("VectorStore failed to initialize: %s", vs_err)
 
-    # ── ChromaDB rebuild from Supabase chunks (if collection empty) ───
+    # ── ChromaDB rebuild from persistent storage (if empty) ───────────
     if vector_store_instance is not None:
         try:
             db = get_database()
@@ -171,12 +165,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    """
-    Application factory.
-
-    Creates and configures the FastAPI application instance
-    with middleware, error handlers, and routes.
-    """
+    """Application factory."""
     settings = get_settings()
 
     app = FastAPI(
@@ -184,23 +173,27 @@ def create_app() -> FastAPI:
         version=settings.app_version,
         description=(
             "AI-powered Vehicle Intelligence Assistant using "
-            "Retrieval-Augmented Generation (RAG) with Google Gemini. "
-            "Upload vehicle documents and get intelligent answers."
+            "Retrieval-Augmented Generation (RAG) with Google Gemini."
         ),
         docs_url="/docs" if not settings.is_production else None,
         redoc_url="/redoc" if not settings.is_production else None,
         lifespan=lifespan,
     )
 
-    # ── CORS Middleware ──────────────────────────────────────────────
-    # In development: allow all origins so any Vite port (5173, 5174…) works.
-    # In production: restrict to the configured allow-list for security.
-    _cors_origins = ["*"] if not settings.is_production else settings.cors_origins
-    _cors_creds   = False  # Must be False when allow_origins=["*"]
+    # ── CORS ─────────────────────────────────────────────────────────
+    # Dev: allow all origins (any Vite port works).
+    # Prod: restrict to configured allow-list.
+    if settings.is_production:
+        cors_origins = settings.cors_origins
+        cors_credentials = True
+    else:
+        cors_origins = ["*"]
+        cors_credentials = False  # must be False when origins is ["*"]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=_cors_origins,
-        allow_credentials=_cors_creds,
+        allow_origins=cors_origins,
+        allow_credentials=cors_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -209,7 +202,6 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(404)
     async def not_found_handler(request: Request, exc):
-        """Return structured JSON for 404 errors."""
         return JSONResponse(
             status_code=404,
             content={
@@ -221,7 +213,6 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(422)
     async def validation_error_handler(request: Request, exc):
-        """Return structured JSON for validation errors."""
         return JSONResponse(
             status_code=422,
             content={
@@ -233,7 +224,6 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(500)
     async def internal_error_handler(request: Request, exc):
-        """Return structured JSON for unhandled server errors."""
         logger.error("Internal server error: %s\n%s", exc, traceback.format_exc())
         return JSONResponse(
             status_code=500,
@@ -248,12 +238,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["System"], response_model=HealthResponse)
     async def health_check() -> HealthResponse:
-        """
-        Health check endpoint with live statistics.
-
-        Returns status, version, environment, and document count.
-        Used by Render to verify the service is alive.
-        """
+        """Health check endpoint. Used by Render to verify the service is alive."""
         try:
             db = get_database()
             doc_service = DocumentService(db)
@@ -278,13 +263,9 @@ def create_app() -> FastAPI:
             "version": settings.app_version,
             "docs": "/docs",
             "health": "/health",
-            "endpoints": {
-                "documents": "/api/documents",
-                "chat": "/api/chat",
-            },
         }
 
-    # ── Route Registration ───────────────────────────────────────────
+    # ── Routes ───────────────────────────────────────────────────────
     app.include_router(
         document_routes.router,
         prefix="/api/documents",
@@ -296,14 +277,7 @@ def create_app() -> FastAPI:
         tags=["Chat"],
     )
 
-    logger.info(
-        "Application configured — CORS: %s | DB: %s",
-        settings.cors_origins,
-        settings.database_path,
-    )
-
     return app
 
 
-# Create the application instance
 app = create_app()

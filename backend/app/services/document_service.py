@@ -216,18 +216,50 @@ class DocumentService:
 
     async def get_document_count(self) -> int:
         """Get the total number of documents."""
-        row = await self.db.fetch_one("SELECT COUNT(*) as count FROM documents")
-        return row["count"] if row else 0
+        try:
+            # Try the SQL COUNT query (works on SQLite)
+            row = await self.db.fetch_one("SELECT COUNT(*) as count FROM documents")
+            if row:
+                return row.get("count", 0) or 0
+        except Exception:
+            pass
+        # Fallback: fetch all and count (works on Supabase PostgREST)
+        rows = await self.db.fetch_all("SELECT * FROM documents")
+        return len(rows)
 
     async def get_document_stats(self):
         """
-        Get aggregate document statistics in a single query.
+        Get aggregate document statistics.
 
-        Returns a dict with total, ready, processing, error counts,
+        Works with both SQLite (native aggregate query) and Supabase PostgREST
+        (client-side aggregation from full document list).
+
+        Returns a DocumentStats with total, ready, processing, error counts,
         total_chunks, and total_size_bytes.
         """
         from app.models.schemas import DocumentStats
 
+        db_class = type(self.db).__name__
+
+        if "Supabase" in db_class:
+            # PostgREST: fetch all documents and aggregate client-side
+            rows = await self.db.fetch_all("SELECT * FROM documents")
+            total = len(rows)
+            ready = sum(1 for r in rows if r.get("status") == "ready")
+            processing = sum(1 for r in rows if r.get("status") == "processing")
+            error = sum(1 for r in rows if r.get("status") == "error")
+            total_chunks = sum(r.get("chunk_count") or 0 for r in rows)
+            total_size = sum(r.get("file_size") or 0 for r in rows)
+            return DocumentStats(
+                total=total,
+                ready=ready,
+                processing=processing,
+                error=error,
+                total_chunks=total_chunks,
+                total_size_bytes=total_size,
+            )
+
+        # SQLite: native aggregate query
         row = await self.db.fetch_one(
             """
             SELECT

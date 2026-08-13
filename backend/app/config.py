@@ -48,9 +48,6 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_role_key: str = ""
     supabase_storage_bucket: str = "documents"
-    # Direct PostgreSQL connection string for asyncpg (Supabase → Settings → Database → Connection string)
-    # Format: postgresql://postgres.[project-ref]:[db-password]@aws-0-region.pooler.supabase.com:6543/postgres
-    supabase_db_url: str = ""
 
     # ── File Upload ──────────────────────────────────────────────────
     upload_dir: str = "./uploads"

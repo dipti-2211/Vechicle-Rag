@@ -65,8 +65,6 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
-      - key: SUPABASE_DB_URL
-        sync: false
 
   # ── Frontend Static Site ────────────────────────────────────────────────────
   - type: web

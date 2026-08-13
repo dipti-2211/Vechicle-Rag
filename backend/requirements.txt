@@ -28,11 +28,10 @@ pydantic-settings==2.7.1
 aiosqlite==0.21.0
 aiofiles==24.1.0
 
-# ── Supabase (persistent storage) ─────────────────────────────────────────────
-# supabase-py provides the PostgreSQL REST client (postgrest-py) and Storage API.
-# asyncpg is used for direct async PostgreSQL connections.
-supabase==2.15.1
-asyncpg==0.30.0
+# ── Supabase ──────────────────────────────────────────────────────────────────
+# supabase-py provides the PostgREST client (table API) + Storage API.
+# No direct PostgreSQL connection needed — only URL + service role key required.
+supabase==2.31.0
 
 # ── Google Gemini AI ──────────────────────────────────────────────────────────
 google-genai==1.14.0

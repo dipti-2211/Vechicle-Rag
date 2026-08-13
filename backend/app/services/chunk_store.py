@@ -74,23 +74,63 @@ async def load_ready_chunks(db) -> List[Dict[str, Any]]:
     """
     Load all chunks from READY documents.
 
+    Uses two queries to avoid JOIN syntax differences between SQLite and PostgREST:
+    1. Get all READY document IDs
+    2. Fetch their chunks
+
     Returns:
         List of dicts with keys: document_id, chunk_index, chunk_text, metadata
     """
     try:
-        rows = await db.fetch_all(
-            """
-            SELECT dc.document_id, dc.chunk_index, dc.chunk_text, dc.metadata
-            FROM document_chunks dc
-            JOIN documents d ON dc.document_id = d.id
-            WHERE d.status = 'ready'
-            ORDER BY dc.document_id, dc.chunk_index
-            """
-        )
-        logger.info(
-            "Loaded %d chunks from persistent storage for ChromaDB rebuild.", len(rows)
-        )
-        return rows
+        db_class = type(db).__name__
+
+        if "Supabase" in db_class:
+            # PostgREST approach: two-step query (PostgREST doesn't support
+            # arbitrary JOIN syntax natively in the table API)
+            ready_docs = await db.fetch_all(
+                "SELECT * FROM documents WHERE status = ?",
+                ("ready",),
+            )
+            if not ready_docs:
+                return []
+
+            ready_ids = [d["id"] for d in ready_docs]
+            all_chunks = []
+
+            # Fetch chunks in batches of document IDs to avoid huge queries
+            batch_size = 50
+            for i in range(0, len(ready_ids), batch_size):
+                batch_ids = ready_ids[i : i + batch_size]
+                for doc_id in batch_ids:
+                    chunks = await db.fetch_all(
+                        "SELECT * FROM document_chunks WHERE document_id = ?",
+                        (doc_id,),
+                    )
+                    all_chunks.extend(chunks)
+
+            # Sort by document_id, chunk_index
+            all_chunks.sort(key=lambda r: (r.get("document_id", ""), r.get("chunk_index", 0)))
+            logger.info(
+                "Loaded %d chunks from Supabase for ChromaDB rebuild.", len(all_chunks)
+            )
+            return all_chunks
+
+        else:
+            # SQLite: use the JOIN query directly
+            rows = await db.fetch_all(
+                """
+                SELECT dc.document_id, dc.chunk_index, dc.chunk_text, dc.metadata
+                FROM document_chunks dc
+                JOIN documents d ON dc.document_id = d.id
+                WHERE d.status = 'ready'
+                ORDER BY dc.document_id, dc.chunk_index
+                """
+            )
+            logger.info(
+                "Loaded %d chunks from SQLite for ChromaDB rebuild.", len(rows)
+            )
+            return rows
+
     except Exception as e:
         logger.error("Failed to load chunks from database: %s", e)
         return []

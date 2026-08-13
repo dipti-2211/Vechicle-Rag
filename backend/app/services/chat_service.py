@@ -315,70 +315,95 @@ class ChatService:
         """
         Compute analytics across all conversations and documents.
 
+        Works with both SQLite (native SQL aggregates) and Supabase PostgREST
+        (client-side aggregation — fetches all rows and computes in Python).
+
         Returns:
             AnalyticsResponse with query counts, rating stats, and document breakdown.
         """
-        # ── Query / rating counts ─────────────────────────────────────────
-        row = await self.db.fetch_one(
-            """
-            SELECT
-                SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END)                       AS total_queries,
-                SUM(CASE WHEN role = 'assistant' AND rating =  1 THEN 1 ELSE 0 END)        AS thumbs_up,
-                SUM(CASE WHEN role = 'assistant' AND rating = -1 THEN 1 ELSE 0 END)        AS thumbs_down,
-                SUM(CASE WHEN role = 'assistant' AND rating IS NULL THEN 1 ELSE 0 END)     AS no_rating
-            FROM messages
-            """
-        )
+        db_class = type(self.db).__name__
 
-        total_queries = row["total_queries"] or 0
-        thumbs_up     = row["thumbs_up"]     or 0
-        thumbs_down   = row["thumbs_down"]   or 0
-        no_rating     = row["no_rating"]     or 0
-        rated = thumbs_up + thumbs_down
-        satisfaction_rate = round(thumbs_up / rated * 100) if rated > 0 else None
+        if "Supabase" in db_class:
+            # ── Supabase PostgREST: aggregate client-side ─────────────────
+            all_msgs = await self.db.fetch_all("SELECT * FROM messages")
+            assistant_msgs = [m for m in all_msgs if m.get("role") == "assistant"]
 
-        # ── Document status counts ─────────────────────────────────────────
-        doc_row = await self.db.fetch_one(
-            """
-            SELECT
-                COUNT(*) AS total,
-                SUM(CASE WHEN status = 'ready'      THEN 1 ELSE 0 END) AS ready,
-                SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing,
-                SUM(CASE WHEN status = 'error'      THEN 1 ELSE 0 END) AS error
-            FROM documents
-            """
-        )
+            total_queries = len(assistant_msgs)
+            thumbs_up    = sum(1 for m in assistant_msgs if m.get("rating") == 1)
+            thumbs_down  = sum(1 for m in assistant_msgs if m.get("rating") == -1)
+            no_rating    = sum(1 for m in assistant_msgs if m.get("rating") is None)
+            rated = thumbs_up + thumbs_down
+            satisfaction_rate = round(thumbs_up / rated * 100) if rated > 0 else None
 
-        docs = DocumentStatusCounts(
-            total=doc_row["total"] or 0,
-            ready=doc_row["ready"] or 0,
-            processing=doc_row["processing"] or 0,
-            error=doc_row["error"] or 0,
-        )
+            all_docs = await self.db.fetch_all("SELECT * FROM documents")
+            docs = DocumentStatusCounts(
+                total=len(all_docs),
+                ready=sum(1 for d in all_docs if d.get("status") == "ready"),
+                processing=sum(1 for d in all_docs if d.get("status") == "processing"),
+                error=sum(1 for d in all_docs if d.get("status") == "error"),
+            )
 
-        # ── Top documents by query count ─────────────────────────────────
-        # Count how often each document is cited in answers.
-        # Uses different JSON functions for SQLite vs PostgreSQL.
-        top_docs = []
-        try:
-            db_class = type(self.db).__name__
-            if "Supabase" in db_class:
-                # PostgreSQL / Supabase — uses jsonb_array_elements
-                top_rows = await self.db.fetch_all(
-                    """
-                    SELECT
-                        elem->>'document_name' AS name,
-                        COUNT(*) AS query_count
-                    FROM messages m,
-                         jsonb_array_elements(m.sources::jsonb) AS elem
-                    WHERE m.role = 'assistant'
-                    GROUP BY name
-                    ORDER BY query_count DESC
-                    LIMIT 5
-                    """
-                )
-            else:
-                # SQLite — uses json_extract / json_each
+            # Top documents by citation count (client-side)
+            top_docs = []
+            try:
+                from collections import Counter
+                doc_name_counts: Counter = Counter()
+                for msg in assistant_msgs:
+                    sources_raw = msg.get("sources", "[]")
+                    try:
+                        sources = json.loads(sources_raw) if isinstance(sources_raw, str) else (sources_raw or [])
+                    except Exception:
+                        sources = []
+                    for src in sources:
+                        name = src.get("document_name") if isinstance(src, dict) else None
+                        if name:
+                            doc_name_counts[name] += 1
+                top_docs = [
+                    {"name": name, "query_count": count}
+                    for name, count in doc_name_counts.most_common(5)
+                ]
+            except Exception as e:
+                logger.warning("Could not compute top documents: %s", e)
+                top_docs = []
+
+        else:
+            # ── SQLite: native SQL aggregates ─────────────────────────────
+            row = await self.db.fetch_one(
+                """
+                SELECT
+                    SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END)                    AS total_queries,
+                    SUM(CASE WHEN role = 'assistant' AND rating =  1 THEN 1 ELSE 0 END)    AS thumbs_up,
+                    SUM(CASE WHEN role = 'assistant' AND rating = -1 THEN 1 ELSE 0 END)    AS thumbs_down,
+                    SUM(CASE WHEN role = 'assistant' AND rating IS NULL THEN 1 ELSE 0 END) AS no_rating
+                FROM messages
+                """
+            )
+            total_queries = row["total_queries"] or 0 if row else 0
+            thumbs_up     = row["thumbs_up"]     or 0 if row else 0
+            thumbs_down   = row["thumbs_down"]   or 0 if row else 0
+            no_rating     = row["no_rating"]     or 0 if row else 0
+            rated = thumbs_up + thumbs_down
+            satisfaction_rate = round(thumbs_up / rated * 100) if rated > 0 else None
+
+            doc_row = await self.db.fetch_one(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN status = 'ready'      THEN 1 ELSE 0 END) AS ready,
+                    SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing,
+                    SUM(CASE WHEN status = 'error'      THEN 1 ELSE 0 END) AS error
+                FROM documents
+                """
+            )
+            docs = DocumentStatusCounts(
+                total=doc_row["total"] or 0,
+                ready=doc_row["ready"] or 0,
+                processing=doc_row["processing"] or 0,
+                error=doc_row["error"] or 0,
+            )
+
+            top_docs = []
+            try:
                 top_rows = await self.db.fetch_all(
                     """
                     SELECT
@@ -392,14 +417,14 @@ class ChatService:
                     LIMIT 5
                     """
                 )
-            top_docs = [
-                {"name": r["name"], "query_count": r["query_count"]}
-                for r in top_rows
-                if r.get("name")
-            ]
-        except Exception as analytics_err:
-            logger.warning("Could not compute top documents: %s", analytics_err)
-            top_docs = []
+                top_docs = [
+                    {"name": r["name"], "query_count": r["query_count"]}
+                    for r in top_rows
+                    if r.get("name")
+                ]
+            except Exception as analytics_err:
+                logger.warning("Could not compute top documents: %s", analytics_err)
+                top_docs = []
 
         return AnalyticsResponse(
             total_queries=total_queries,
