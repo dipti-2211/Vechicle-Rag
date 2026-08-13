@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { History, X, MessageSquare, Trash2, Download, Plus, ChevronRight } from 'lucide-react';
 import toast from 'react-hot-toast';
-import api from '../../api/axios';
+import api, { API_BASE_URL } from '../../api/axios';
 
 export function HistoryDrawer() {
   const [open, setOpen] = useState(false);
@@ -40,8 +40,7 @@ export function HistoryDrawer() {
   const exportConv = async (conv, e) => {
     e.stopPropagation();
     try {
-      const apiBase = import.meta.env.VITE_API_URL || '';
-      const res = await fetch(`${apiBase}/api/chat/conversations/${conv.id}/export`);
+      const res = await fetch(`${API_BASE_URL}/api/chat/conversations/${conv.id}/export`);
       if (!res.ok) throw new Error();
       const blob = await res.blob();
       const disposition = res.headers.get('Content-Disposition') || '';

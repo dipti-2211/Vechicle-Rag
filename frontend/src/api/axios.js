@@ -1,18 +1,43 @@
 import axios from 'axios'
 
 /**
- * Pre-configured Axios instance for API calls.
+ * Determine the API base URL at runtime.
  *
- * In development, Vite's proxy forwards /api/* requests to the backend.
- * In production, VITE_API_URL points directly to the deployed backend.
+ * Priority order:
+ *   1. VITE_API_URL environment variable (set at build time by Render)
+ *   2. Runtime detection: localhost → local backend, any other host → production
+ *
+ * This ensures the app works correctly in BOTH environments:
+ *   - Local dev (localhost:5173) → http://localhost:8000
+ *   - Production (auron-frontend.onrender.com) → https://auron-backend-un4f.onrender.com
  *
  * NOTE: We do NOT set a global Content-Type header here.
  * - For JSON requests, axios automatically sets 'application/json'.
  * - For file uploads (FormData), the browser must set 'multipart/form-data'
  *   WITH the correct boundary — setting it manually breaks the upload.
  */
+const PRODUCTION_BACKEND = 'https://auron-backend-un4f.onrender.com'
+
+function getApiBaseUrl() {
+  // 1. Build-time env var (set by Render or .env) — highest priority
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL
+  }
+  // 2. Runtime detection — localhost = local dev, anything else = production
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') {
+      return 'http://localhost:8000'
+    }
+    return PRODUCTION_BACKEND
+  }
+  return ''
+}
+
+export const API_BASE_URL = getApiBaseUrl()
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '',
+  baseURL: API_BASE_URL,
   timeout: 120000, // 120 second timeout (large file uploads need more time)
 })
 

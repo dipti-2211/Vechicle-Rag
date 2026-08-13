@@ -8,7 +8,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import toast from 'react-hot-toast';
-import api from '../api/axios';
+import api, { API_BASE_URL } from '../api/axios';
 import { PromptBox } from '../components/ui/chatgpt-prompt-input';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -270,8 +270,7 @@ export default function Chat() {
     let streamedConvId = activeConvId;
 
     try {
-      const apiBase = import.meta.env.VITE_API_URL || '';
-      const response = await fetch(`${apiBase}/api/chat/stream`, {
+      const response = await fetch(`${API_BASE_URL}/api/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -438,8 +437,7 @@ export default function Chat() {
                     onClick={async (e) => {
                       e.stopPropagation();
                       try {
-                        const apiBase = import.meta.env.VITE_API_URL || '';
-                        const res = await fetch(`${apiBase}/api/chat/conversations/${conv.id}/export`);
+                        const res = await fetch(`${API_BASE_URL}/api/chat/conversations/${conv.id}/export`);
                         if (!res.ok) throw new Error();
                         const blob = await res.blob();
                         const d = res.headers.get('Content-Disposition') || '';

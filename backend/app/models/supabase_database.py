@@ -146,7 +146,7 @@ class SupabaseDatabase:
 
     async def _run(self, func):
         """Execute a synchronous supabase-py call in a thread pool."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, func)
 
     # ── Public Interface ─────────────────────────────────────────────────────

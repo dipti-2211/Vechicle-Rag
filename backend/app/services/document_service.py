@@ -10,6 +10,7 @@ Business logic for document CRUD operations:
 import json
 import logging
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -160,16 +161,17 @@ class DocumentService:
         Returns:
             Updated DocumentResponse, or None if not found.
         """
+        now = datetime.now(timezone.utc).isoformat()
         await self.db.execute(
             """
             UPDATE documents
             SET status = ?, chunk_count = ?, page_count = ?,
                 vehicle_name = ?, manufacturer = ?, error_message = ?,
-                updated_at = datetime('now')
+                updated_at = ?
             WHERE id = ?
             """,
             (status, chunk_count, page_count, vehicle_name,
-             manufacturer, error_message, document_id),
+             manufacturer, error_message, now, document_id),
         )
 
         logger.info("Updated document %s: status=%s, chunks=%d", document_id, status, chunk_count)
@@ -319,13 +321,14 @@ class DocumentService:
             document_id: The document UUID.
             storage_path: The Supabase Storage path (e.g. "<doc_id>/<filename>").
         """
+        now = datetime.now(timezone.utc).isoformat()
         await self.db.execute(
             """
             UPDATE documents
-            SET storage_path = ?, updated_at = datetime('now')
+            SET storage_path = ?, updated_at = ?
             WHERE id = ?
             """,
-            (storage_path, document_id),
+            (storage_path, now, document_id),
         )
         logger.debug("Updated storage_path for document %s: %s", document_id, storage_path)
 

@@ -9,6 +9,7 @@ RAG-powered answer generation will be added in Milestone 10.
 import json
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 from app.models.database import Database
@@ -118,13 +119,14 @@ class ChatService:
         if conv is None:
             return None
 
+        now = datetime.now(timezone.utc).isoformat()
         await self.db.execute(
             """
             UPDATE conversations
-            SET title = ?, updated_at = datetime('now')
+            SET title = ?, updated_at = ?
             WHERE id = ?
             """,
-            (title, conversation_id),
+            (title, now, conversation_id),
         )
 
         logger.info("Updated conversation %s title to: %s", conversation_id, title)
@@ -241,9 +243,10 @@ class ChatService:
         )
 
         # Update conversation's updated_at timestamp
+        now = datetime.now(timezone.utc).isoformat()
         await self.db.execute(
-            "UPDATE conversations SET updated_at = datetime('now') WHERE id = ?",
-            (conversation_id,),
+            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            (now, conversation_id),
         )
 
         logger.debug(

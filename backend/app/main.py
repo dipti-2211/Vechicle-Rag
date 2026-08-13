@@ -74,8 +74,7 @@ async def lifespan(app: FastAPI):
             # ── Connectivity probe ─────────────────────────────────────
             # Do a lightweight real request to catch invalid keys immediately
             # (create_client is lazy and doesn't validate the key itself).
-            import asyncio
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             probe_result = await loop.run_in_executor(
                 None,
                 lambda: sb_client.table("documents").select("id").limit(1).execute()
@@ -156,6 +155,62 @@ async def lifespan(app: FastAPI):
                 )
         except Exception as rebuild_err:
             logger.warning("ChromaDB rebuild skipped: %s", rebuild_err)
+
+    # ── Startup recovery: handle documents stuck in 'processing' ─────
+    # On Render free-tier, background tasks are lost when the instance sleeps/restarts.
+    # On startup, we find any stuck 'processing' docs and either retry or mark as error.
+    try:
+        db = get_database()
+        stuck_rows = await db.fetch_all(
+            "SELECT * FROM documents WHERE status = ?",
+            ("processing",),
+        )
+        if stuck_rows:
+            logger.warning(
+                "⚠️  Found %d document(s) stuck in 'processing' — attempting recovery...",
+                len(stuck_rows),
+            )
+            service = DocumentService(db)
+            for row in stuck_rows:
+                doc_id = row["id"]
+                file_path = row.get("file_path", "")
+                original_filename = row.get("original_filename", "unknown")
+                file_type = row.get("file_type", "")
+
+                if file_path and Path(file_path).exists():
+                    # File is on disk — re-queue background processing
+                    logger.info(
+                        "Recovery: re-processing document %s (%s)...",
+                        doc_id, original_filename,
+                    )
+                    from app.routes.documents import _process_document
+                    import asyncio as _asyncio
+                    _asyncio.create_task(
+                        _process_document(
+                            doc_id=doc_id,
+                            file_path=file_path,
+                            file_type=file_type,
+                            original_filename=original_filename,
+                            storage_path=row.get("storage_path"),
+                        )
+                    )
+                else:
+                    # File missing (ephemeral disk was wiped) — mark as error
+                    logger.warning(
+                        "Recovery: file missing for %s (%s) — marking as error.",
+                        doc_id, original_filename,
+                    )
+                    await service.update_document_status(
+                        document_id=doc_id,
+                        status="error",
+                        error_message=(
+                            "Processing was interrupted (server restart). "
+                            "Please re-upload this document."
+                        ),
+                    )
+    except Exception as recovery_err:
+        logger.error("Startup recovery failed: %s", recovery_err)
+
 
     yield
 
