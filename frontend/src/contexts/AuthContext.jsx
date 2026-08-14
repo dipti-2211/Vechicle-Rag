@@ -1,24 +1,43 @@
 /**
- * AuthContext — provides Supabase Auth state to the entire app.
+ * AuthContext — Supabase Auth state for the entire app.
  *
  * Exposes:
  *   user              — Supabase User object (or null)
  *   session           — Supabase Session object (or null)
  *   loading           — true while initial session is being resolved
- *   isAnonymous       — true if the current user logged in anonymously
+ *   isAnonymous       — true if the current user is anonymous
  *   signIn            — email + password sign-in
- *   signUp            — email + password sign-up (no captcha)
- *   signInWithGoogle  — Google OAuth (redirects back to app)
- *   signInAnonymously — Supabase anonymous auth (no captcha)
+ *   signUp            — email + password sign-up
+ *   signInWithGoogle  — Google OAuth (redirects)
+ *   signInAnonymously — always creates a fresh anonymous session
  *   signOut
  *
- * On new signup / first SIGNED_IN event: calls POST /api/auth/initialize-user
- * to seed demo documents for the user (idempotent — backend checks first).
+ * ═══════════════════════════════════════════════════════════════
+ * ANONYMOUS ISOLATION DESIGN
+ * ═══════════════════════════════════════════════════════════════
+ * Supabase persists every session — including anonymous ones — in
+ * localStorage. Without intervention, refreshing the page restores
+ * the SAME anonymous user_id, so all their old data reappears.
+ *
+ * Fix — on every app start, if a persisted anonymous session is
+ * detected we:
+ *   1. Sign out the old anonymous session (scope:'local' — no network
+ *      call, just clears localStorage).
+ *   2. Immediately call signInAnonymously() to get a brand-new UID.
+ *   3. Set the new session as the current auth state.
+ *
+ * Result:
+ *   REFRESH      → old UID gone, new UID, empty workspace
+ *   CLOSE+REOPEN → old UID gone, new UID, empty workspace
+ *   USER B       → different UID, completely isolated workspace
+ *
+ * Permanent (email / Google) sessions ARE restored normally.
+ * Their data persists across refreshes as expected.
+ * ═══════════════════════════════════════════════════════════════
  */
 
 import {
   createContext,
-  useContext,
   useEffect,
   useRef,
   useState,
@@ -29,33 +48,36 @@ import api from '../api/axios'
 const AuthContext = createContext(null)
 
 // ── OAuth redirect URL ────────────────────────────────────────────────────────
-// Works in both local dev (localhost:5173) and production (Render).
-// VITE_SITE_URL is set in Render's env vars to the production URL.
-// In local dev it falls back to window.location.origin (http://localhost:5173).
+// VITE_SITE_URL is set on Render to the exact production frontend URL.
+// In local dev it falls back to window.location.origin.
 function getOAuthRedirectUrl() {
-  if (import.meta.env.VITE_SITE_URL) {
-    return import.meta.env.VITE_SITE_URL.replace(/\/$/, '') + '/dashboard'
-  }
-  if (typeof window !== 'undefined') {
-    return window.location.origin + '/dashboard'
-  }
-  return 'http://localhost:5173/dashboard'
+  const base =
+    (import.meta.env.VITE_SITE_URL || '').replace(/\/$/, '') ||
+    (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173')
+  return `${base}/dashboard`
+}
+
+// ── Helper: is this Supabase user anonymous? ──────────────────────────────────
+function isAnonUser(user) {
+  return Boolean(user?.is_anonymous)
 }
 
 export function AuthProvider({ children }) {
   const [user, setUser]       = useState(null)
   const [session, setSession] = useState(null)
+  // Start true — we resolve the session before rendering anything.
   const [loading, setLoading] = useState(true)
 
-  // Track which user IDs have already been initialized in this browser session
-  // to avoid re-calling initialize-user on every tab focus / token refresh.
+  // Track which user IDs have already had demo data seeded this browser session.
   const initializedRef = useRef(new Set())
+  // Prevent the onAuthStateChange listener from reacting to our own
+  // sign-out → sign-in sequence during anonymous refresh.
+  const refreshingAnonRef = useRef(false)
 
-  // ── Derive isAnonymous from Supabase user metadata ────────────────
-  // Supabase sets is_anonymous = true on anonymous users.
-  const isAnonymous = Boolean(user?.is_anonymous)
+  // ── Derived ───────────────────────────────────────────────────────────────
+  const isAnonymous = isAnonUser(user)
 
-  // ── Initialize demo data for a brand-new user ─────────────────────
+  // ── Demo-data seeding (permanent accounts only) ───────────────────────────
   const initializeUser = async (accessToken) => {
     try {
       await api.post(
@@ -64,32 +86,100 @@ export function AuthProvider({ children }) {
         { headers: { Authorization: `Bearer ${accessToken}` } }
       )
     } catch (err) {
-      // Non-fatal — user can still use the app; demo data will be missing
       console.warn('[Auron] User initialization failed:', err?.response?.data ?? err.message)
     }
   }
 
-  // ── Listen for auth state changes ─────────────────────────────────
-  useEffect(() => {
-    // Get the initial session (handles page refreshes / persistent sessions)
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      setSession(s)
-      setUser(s?.user ?? null)
-      setLoading(false)
-    })
+  // ── Create a brand-new anonymous session ──────────────────────────────────
+  // Shared by both the startup auto-refresh and the manual "Stay Anonymous" click.
+  const _createFreshAnonSession = async () => {
+    // Clear the old session from localStorage (no server round-trip needed)
+    await supabase.auth.signOut({ scope: 'local' })
+    // Obtain a brand-new anonymous UID from Supabase
+    const { data, error } = await supabase.auth.signInAnonymously()
+    if (error) throw error
+    return data
+  }
 
+  // ── Startup: resolve initial session ─────────────────────────────────────
+  useEffect(() => {
+    let didMount = true
+
+    async function resolveInitialSession() {
+      try {
+        const { data: { session: s } } = await supabase.auth.getSession()
+
+        if (!didMount) return
+
+        if (s?.user && isAnonUser(s.user)) {
+          // ─────────────────────────────────────────────────────────────────
+          // Persisted anonymous session found.
+          // Replace it with a fresh one so the user always starts clean.
+          // We mark refreshingAnonRef so the onAuthStateChange listener
+          // ignores intermediate SIGNED_OUT events from our own sign-out.
+          // ─────────────────────────────────────────────────────────────────
+          refreshingAnonRef.current = true
+          try {
+            const freshData = await _createFreshAnonSession()
+            if (didMount) {
+              setSession(freshData.session)
+              setUser(freshData.user)
+            }
+          } catch (err) {
+            console.warn('[Auron] Could not create fresh anonymous session:', err)
+            // Fallback: leave the user as logged-out
+            if (didMount) {
+              setSession(null)
+              setUser(null)
+            }
+          } finally {
+            refreshingAnonRef.current = false
+          }
+
+        } else {
+          // Permanent (email / Google) session — restore normally.
+          if (didMount) {
+            setSession(s)
+            setUser(s?.user ?? null)
+          }
+        }
+      } catch (err) {
+        console.warn('[Auron] Session resolution error:', err)
+        if (didMount) {
+          setSession(null)
+          setUser(null)
+        }
+      } finally {
+        if (didMount) setLoading(false)
+      }
+    }
+
+    resolveInitialSession()
+
+    // ── Listen for subsequent auth state changes ──────────────────────────
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, s) => {
+        if (!didMount) return
+
+        // Ignore events fired by our own anonymous-refresh sequence.
+        if (refreshingAnonRef.current) return
+
+        if (event === 'SIGNED_OUT') {
+          setSession(null)
+          setUser(null)
+          setLoading(false)
+          return
+        }
+
         setSession(s)
         setUser(s?.user ?? null)
         setLoading(false)
 
-        // Seed demo data exactly once per new sign-in.
-        // Skip for anonymous users — they get no demo docs.
+        // Seed demo data exactly once per new permanent user sign-in.
         if (
           event === 'SIGNED_IN' &&
           s?.user &&
-          !s.user.is_anonymous &&
+          !isAnonUser(s.user) &&
           !initializedRef.current.has(s.user.id)
         ) {
           initializedRef.current.add(s.user.id)
@@ -98,12 +188,15 @@ export function AuthProvider({ children }) {
       }
     )
 
-    return () => subscription.unsubscribe()
+    return () => {
+      didMount = false
+      subscription.unsubscribe()
+    }
   }, [])
 
-  // ── Auth actions ──────────────────────────────────────────────────
+  // ── Auth actions ──────────────────────────────────────────────────────────
 
-  /** Email + password sign-in (no captcha required for sign-in) */
+  /** Email + password sign-in */
   const signIn = async (email, password) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) throw error
@@ -112,8 +205,7 @@ export function AuthProvider({ children }) {
 
   /**
    * Email + password sign-up.
-   * Email confirmation must be OFF in Supabase → Auth → Email → Confirm email.
-   * With confirmation OFF, the user is returned immediately and can access the app.
+   * "Confirm email" must be OFF in Supabase → Auth → Email for immediate access.
    */
   const signUp = async (email, password) => {
     const { data, error } = await supabase.auth.signUp({ email, password })
@@ -123,8 +215,8 @@ export function AuthProvider({ children }) {
 
   /**
    * Google OAuth sign-in.
-   * Redirects the browser to Google, then back to /dashboard.
-   * No captcha required — OAuth flow handles bot protection itself.
+   * Redirects the browser to Google → back to /dashboard.
+   * VITE_SITE_URL on Render must match the Supabase redirect URL allowlist.
    */
   const signInWithGoogle = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
@@ -137,13 +229,22 @@ export function AuthProvider({ children }) {
   }
 
   /**
-   * Anonymous sign-in using Supabase's built-in anonymous auth.
-   * Requires: Supabase Dashboard → Auth → Anonymous sign-ins → ON
+   * Anonymous sign-in — ALWAYS creates a brand-new isolated session.
+   *
+   * Regardless of whether there is an existing session (anonymous or
+   * permanent), this action discards it and creates a fresh anonymous UID.
+   * Each click of "Stay Anonymous" = completely new workspace.
    */
   const signInAnonymously = async () => {
-    const { data, error } = await supabase.auth.signInAnonymously()
-    if (error) throw error
-    return data
+    refreshingAnonRef.current = true
+    try {
+      const freshData = await _createFreshAnonSession()
+      setSession(freshData.session)
+      setUser(freshData.user)
+      return freshData
+    } finally {
+      refreshingAnonRef.current = false
+    }
   }
 
   const signOut = async () => {
