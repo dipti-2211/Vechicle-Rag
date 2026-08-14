@@ -6,8 +6,12 @@ Endpoints:
     Called by the frontend after a new user signs up.
     Seeds 3 pre-written demo documents so new users immediately have
     something to explore in the dashboard and chat.
-
     Idempotent — checks if user already has documents before seeding.
+
+  DELETE /api/auth/delete-account
+    Permanently deletes the authenticated user's Supabase Auth record.
+    Uses the service-role key server-side — never exposed to frontend.
+    Cascades to profiles and user_preferences via ON DELETE CASCADE.
 """
 
 import logging
@@ -483,3 +487,158 @@ async def initialize_user(
         "documents_queued": len(seeded_docs),
         "document_ids": seeded_docs,
     }
+
+
+# ── Delete Account ─────────────────────────────────────────────────────────────
+
+@router.delete(
+    "/delete-account",
+    summary="Permanently delete the authenticated user's account and all their data",
+    description=(
+        "Deletes everything owned by the calling user, in safe order:\n"
+        "  1. Fetch all the user's documents (need file paths & storage paths)\n"
+        "  2. Delete local disk files for each document\n"
+        "  3. Delete Supabase Storage objects for each document\n"
+        "  4. Delete all ChromaDB vector chunks for the user\n"
+        "  5. Delete all conversations (cascades → messages)\n"
+        "  6. Delete all documents (cascades → document_chunks)\n"
+        "  7. Delete the auth.users row (cascades → profiles, user_preferences)\n\n"
+        "Only the requesting user's data is touched. Uses service-role key server-side."
+    ),
+)
+async def delete_account(
+    user_id: str = Depends(require_user),
+) -> dict:
+    """
+    Permanently and safely delete the authenticated user's account.
+
+    Deletion order is carefully sequenced so that:
+    - We fetch file paths BEFORE deleting DB rows
+    - Cascade constraints clean up child rows automatically
+    - Each cleanup step is logged individually
+    - Cleanup failures are non-fatal to avoid leaving the auth row
+      in a broken limbo state (auth deletion is the final step)
+    - Only the authenticated user's rows are ever touched
+    """
+    settings = get_settings()
+    db = get_database()
+
+    logger.info("Account deletion started for user: %s", user_id)
+
+    # ── Import helpers ────────────────────────────────────────────────
+    from app.services.supabase_client import get_supabase_client, delete_file_from_storage
+
+    # ── 1. Fetch all documents owned by this user BEFORE any deletion ──────────
+    # We need file_path and storage_path before the rows are gone.
+    doc_rows = await db.fetch_all(
+        "SELECT id, file_path, storage_path, original_filename FROM documents WHERE user_id = ?",
+        (user_id,),
+    )
+    logger.info(
+        "Found %d document(s) owned by user %s.",
+        len(doc_rows), user_id,
+    )
+
+    # ── 2. Delete local disk files ─────────────────────────────────────────────
+    for row in doc_rows:
+        file_path = row.get("file_path")
+        if file_path:
+            try:
+                p = Path(file_path)
+                if p.exists():
+                    p.unlink()
+                    logger.info("Deleted local file: %s", file_path)
+            except Exception as e:
+                logger.warning("Could not delete local file %s: %s", file_path, e)
+
+    # ── 3. Delete Supabase Storage objects ─────────────────────────────────────
+    for row in doc_rows:
+        storage_path = row.get("storage_path")
+        if storage_path:
+            try:
+                deleted = delete_file_from_storage(storage_path)
+                if deleted:
+                    logger.info("Deleted storage object: %s", storage_path)
+                else:
+                    logger.warning("Storage object not deleted: %s", storage_path)
+            except Exception as e:
+                logger.warning("Could not delete storage object %s: %s", storage_path, e)
+
+    # ── 4. Delete ChromaDB vector chunks for this user ─────────────────────────
+    try:
+        from app.routes.documents import _get_vector_store
+        vs = _get_vector_store()
+        # ChromaDB stores user_id in chunk metadata — delete all chunks belonging to this user
+        existing = vs.collection.get(
+            where={"user_id": user_id},
+            include=[],
+        )
+        chunk_ids = existing.get("ids", [])
+        if chunk_ids:
+            vs.collection.delete(ids=chunk_ids)
+            logger.info("Deleted %d ChromaDB vectors for user %s.", len(chunk_ids), user_id)
+        else:
+            logger.info("No ChromaDB vectors found for user %s.", user_id)
+    except Exception as e:
+        logger.warning("ChromaDB cleanup failed for user %s: %s", user_id, e)
+
+    # ── 5. Delete conversations (cascades → messages) ──────────────────────────
+    try:
+        await db.execute(
+            "DELETE FROM conversations WHERE user_id = ?",
+            (user_id,),
+        )
+        logger.info("Deleted conversations for user %s.", user_id)
+    except Exception as e:
+        logger.warning("Failed to delete conversations for user %s: %s", user_id, e)
+
+    # ── 6. Delete documents (cascades → document_chunks) ──────────────────────
+    try:
+        await db.execute(
+            "DELETE FROM documents WHERE user_id = ?",
+            (user_id,),
+        )
+        logger.info("Deleted document records for user %s.", user_id)
+    except Exception as e:
+        logger.warning("Failed to delete document records for user %s: %s", user_id, e)
+
+    # ── 7. Delete auth.users row (cascades → profiles, user_preferences) ───────
+    # This MUST be last — it requires the service-role key.
+    if not settings.supabase_configured:
+        logger.error(
+            "Supabase not configured — cannot delete auth record for user %s. "
+            "Local data has been cleaned up but the auth row remains.", user_id,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Your local data has been deleted, but the authentication record "
+                "could not be removed because Supabase is not configured on this server."
+            ),
+        )
+
+    try:
+        from supabase import create_client
+        admin_client = create_client(
+            settings.supabase_url,
+            settings.supabase_service_role_key,
+        )
+        admin_client.auth.admin.delete_user(user_id)
+        logger.info("auth.users row deleted for user %s — account fully purged.", user_id)
+    except Exception as e:
+        logger.error("Failed to delete auth.users for user %s: %s", user_id, e)
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Your data was removed but we could not delete the authentication record. "
+                "Please contact support to complete the account deletion."
+            ),
+        )
+
+    return {
+        "deleted": True,
+        "user_id": user_id,
+        "documents_cleaned": len(doc_rows),
+    }
+
+
