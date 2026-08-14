@@ -3,6 +3,52 @@ import { useNavigate, Link } from 'react-router-dom'
 import { Zap, Mail, Lock, ArrowRight, Loader2 } from 'lucide-react'
 import { useAuth } from '../contexts/useAuth'
 
+/**
+ * Extract a human-readable message from any Supabase / network error.
+ * Supabase AuthApiError objects have a non-enumerable `message` property
+ * that causes JSON.stringify(err) → "{}". This helper reads it directly.
+ */
+function extractAuthError(err) {
+  if (import.meta.env.DEV) {
+    console.error('Supabase signup error:', err)
+  }
+
+  const raw =
+    (err?.message && String(err.message).trim()) ||
+    (err?.error_description && String(err.error_description).trim()) ||
+    (err?.msg && String(err.msg).trim()) ||
+    ''
+
+  if (!raw || raw === '[object Object]') {
+    return 'Login failed. Please try again.'
+  }
+
+  const lower = raw.toLowerCase()
+  if (lower.includes('invalid login credentials') || lower.includes('invalid email or password')) {
+    return 'Invalid email or password. Please check your credentials and try again.'
+  }
+  if (lower.includes('email not confirmed') || lower.includes('not confirmed')) {
+    return 'Please confirm your email address before signing in. Check your inbox.'
+  }
+  if (lower.includes('email rate limit') || lower.includes('rate limit') || lower.includes('too many requests')) {
+    return 'Too many requests. Please wait a few minutes and try again.'
+  }
+  if (lower.includes('user already registered') || lower.includes('already been registered')) {
+    return 'An account with this email already exists. Try signing in instead.'
+  }
+  if (lower.includes('unable to validate email address') || lower.includes('invalid email')) {
+    return 'Please enter a valid email address.'
+  }
+  if (lower.includes('password should be') || lower.includes('weak password')) {
+    return 'Your password is too weak. Please use at least 6 characters.'
+  }
+  if (lower.includes('failed to fetch') || lower.includes('networkerror') || lower.includes('network request failed')) {
+    return 'Network error. Please check your connection and try again.'
+  }
+
+  return raw
+}
+
 export default function Login() {
   const navigate = useNavigate()
   const { signIn } = useAuth()
@@ -20,7 +66,7 @@ export default function Login() {
       await signIn(email, password)
       navigate('/dashboard')
     } catch (err) {
-      setError(err.message ?? 'Login failed. Please check your credentials.')
+      setError(extractAuthError(err))
     } finally {
       setLoading(false)
     }

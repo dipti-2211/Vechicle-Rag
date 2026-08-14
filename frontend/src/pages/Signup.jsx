@@ -3,6 +3,66 @@ import { useNavigate, Link } from 'react-router-dom'
 import { Zap, Mail, Lock, ArrowRight, Loader2, CheckCircle } from 'lucide-react'
 import { useAuth } from '../contexts/useAuth'
 
+/**
+ * Extract a human-readable message from any Supabase / network error.
+ *
+ * Supabase AuthApiError objects can have a non-enumerable `message`
+ * property, which causes JSON.stringify(err) → "{}". This helper reads
+ * the property directly and maps known Supabase error strings to
+ * user-friendly copy.
+ */
+function extractAuthError(err) {
+  if (import.meta.env.DEV) {
+    console.error('Supabase signup error:', err)
+  }
+
+  // Supabase AuthApiError — message is the canonical field.
+  // error_description covers OAuth / implicit-flow errors.
+  // msg appears in some older SDK versions.
+  const raw =
+    (err?.message && String(err.message).trim()) ||
+    (err?.error_description && String(err.error_description).trim()) ||
+    (err?.msg && String(err.msg).trim()) ||
+    ''
+
+  if (!raw || raw === '[object Object]') {
+    return 'Unable to create your account. Please try again.'
+  }
+
+  // Map Supabase / PostgREST error strings → friendly messages
+  const lower = raw.toLowerCase()
+  if (lower.includes('user already registered') || lower.includes('already been registered') || lower.includes('email address is already')) {
+    return 'An account with this email already exists. Try signing in instead.'
+  }
+  if (lower.includes('email rate limit') || lower.includes('rate limit') || lower.includes('too many requests')) {
+    return 'Too many requests. Please wait a few minutes and try again.'
+  }
+  if (lower.includes('email not confirmed') || lower.includes('not confirmed')) {
+    return 'Please confirm your email address before signing in. Check your inbox.'
+  }
+  if (lower.includes('invalid login credentials') || lower.includes('invalid email or password')) {
+    return 'Invalid email or password. Please check your credentials and try again.'
+  }
+  if (lower.includes('unable to validate email address') || lower.includes('invalid email')) {
+    return 'Please enter a valid email address.'
+  }
+  if (lower.includes('password should be') || lower.includes('password must') || lower.includes('weak password')) {
+    return 'Your password is too weak. Please use at least 6 characters.'
+  }
+  if (lower.includes('failed to fetch') || lower.includes('networkerror') || lower.includes('network request failed')) {
+    return 'Network error. Please check your connection and try again.'
+  }
+  if (lower.includes('email link is invalid') || lower.includes('confirmation link')) {
+    return 'The confirmation link is invalid or has expired. Please sign up again.'
+  }
+  if (lower.includes('smtp') || lower.includes('email could not be sent') || lower.includes('error sending')) {
+    return 'We could not send a confirmation email right now. Please try again shortly.'
+  }
+
+  // Return the raw Supabase message if it\'s already readable
+  return raw
+}
+
 export default function Signup() {
   const navigate = useNavigate()
   const { signUp } = useAuth()
@@ -39,7 +99,7 @@ export default function Signup() {
         setSuccess(true)
       }
     } catch (err) {
-      setError(err.message ?? 'Sign up failed. Please try again.')
+      setError(extractAuthError(err))
     } finally {
       setLoading(false)
     }
