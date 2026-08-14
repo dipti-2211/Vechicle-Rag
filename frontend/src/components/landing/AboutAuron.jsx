@@ -1,16 +1,14 @@
 /**
  * AboutAuron — "What is Auron?" section
- * Immediately below the hero. id="about" for smooth-scroll target.
+ * Wrapped in CinematicSection for GSAP scroll-reveal + aurora + grid bg.
  */
+import CinematicSection from './CinematicSection'
 import { Bot, FileText, MessageSquare } from 'lucide-react'
 
 export default function AboutAuron() {
   return (
-    <section
-      id="about"
-      className="w-full bg-black border-t border-white/[0.06] px-6 md:px-16 py-24 md:py-32"
-    >
-      <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+    <CinematicSection id="about" bgText="ABOUT">
+      <div className="max-w-6xl mx-auto px-6 md:px-16 py-24 md:py-32 grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
 
         {/* Left: text */}
         <div>
@@ -46,9 +44,8 @@ export default function AboutAuron() {
           </p>
         </div>
 
-        {/* Right: visual card */}
+        {/* Right: visual chat card */}
         <div className="relative">
-          {/* Ambient glow */}
           <div className="absolute -inset-12 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none" />
 
           <div className="relative bento-card p-6 space-y-4">
@@ -66,7 +63,6 @@ export default function AboutAuron() {
               </div>
             </div>
 
-            {/* Chat bubbles */}
             <div className="space-y-3">
               <div className="flex justify-end">
                 <div className="bg-white/[0.08] border border-white/[0.08] rounded-2xl rounded-tr-sm px-4 py-2.5 max-w-[80%]">
@@ -96,7 +92,6 @@ export default function AboutAuron() {
               </div>
             </div>
 
-            {/* Bottom icons */}
             <div className="flex items-center gap-3 pt-2 border-t border-white/[0.06]">
               <FileText className="w-4 h-4 text-white/25" />
               <span className="text-xs text-white/30">Nexon Owner's Manual · 2023</span>
@@ -105,6 +100,6 @@ export default function AboutAuron() {
           </div>
         </div>
       </div>
-    </section>
+    </CinematicSection>
   )
 }

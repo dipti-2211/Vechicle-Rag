@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { MessageSquare, UploadCloud, Zap, ArrowRight } from 'lucide-react';
+import { MessageSquare, Zap } from 'lucide-react';
 import { LimelightNav }  from '../components/ui/limelight-nav';
 import { SplineScene }   from '../components/ui/splite';
 import { Spotlight }     from '../components/ui/spotlight';
@@ -9,11 +9,13 @@ import {
   FileText, UploadCloud as Upload, Settings,
 } from 'lucide-react';
 
-// New landing sections
+// Landing sections
 import AboutAuron     from '../components/landing/AboutAuron';
+import MeetAuron      from '../components/landing/MeetAuron';
 import HowAuronWorks  from '../components/landing/HowAuronWorks';
 import AuronFeatures  from '../components/landing/AuronFeatures';
 import FinalCTA       from '../components/landing/FinalCTA';
+import MotionButton   from '../components/landing/MotionButton';
 
 const NAV_ITEMS = [
   { id: 'home',      path: '/',          label: 'Home',      icon: Home           },
@@ -117,26 +119,20 @@ export default function Landing() {
                 instant AI-powered answers — from maintenance intervals to safety specs.
               </p>
 
-              {/* ── CHANGED: Two hero buttons ─────────────────────────── */}
-              <div className="mt-8 flex items-center gap-3">
-                {/* Primary: Get Started → navigates to /login */}
-                <button
+              {/* Hero buttons — MotionButton animated pills */}
+              <div className="mt-8 flex flex-wrap items-center gap-4">
+                <MotionButton
                   id="hero-get-started"
+                  label="Get Started"
+                  variant="primary"
                   onClick={() => navigate('/login')}
-                  className="flex items-center gap-2.5 px-6 py-3 rounded-2xl bg-white text-black text-sm font-bold shadow-[0_0_40px_rgba(255,255,255,0.15)] hover:shadow-[0_0_60px_rgba(255,255,255,0.25)] hover:bg-white/95 transition-all duration-300 hover:scale-[1.03]"
-                >
-                  Get Started
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-
-                {/* Secondary: Explore Auron → smooth scroll to #about */}
-                <button
+                />
+                <MotionButton
                   id="hero-explore"
+                  label="Explore Auron"
+                  variant="secondary"
                   onClick={scrollToAbout}
-                  className="flex items-center gap-2 px-5 py-3 rounded-2xl border border-white/20 bg-white/5 hover:bg-white/10 text-white text-sm font-semibold backdrop-blur-sm transition-all duration-200 hover:scale-[1.02]"
-                >
-                  Explore Auron
-                </button>
+                />
               </div>
             </div>
 
@@ -157,7 +153,7 @@ export default function Landing() {
       <AboutAuron />
       <HowAuronWorks />
       <AuronFeatures />
-      <FinalCTA />
+      <MeetAuron />
 
       {/* ── Mobile bottom nav (UNCHANGED) ───────────────────────────── */}
       <div className="fixed bottom-0 left-0 right-0 lg:hidden bg-black/90 backdrop-blur-md border-t border-white/[0.08] z-50">
