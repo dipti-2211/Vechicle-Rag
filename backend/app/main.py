@@ -212,19 +212,17 @@ def create_app() -> FastAPI:
     )
 
     # ── CORS ─────────────────────────────────────────────────────────
-    # Dev: allow all origins (any Vite port works).
-    # Prod: restrict to configured allow-list.
-    if settings.is_production:
-        cors_origins = settings.cors_origins
-        cors_credentials = True
-    else:
-        cors_origins = ["*"]
-        cors_credentials = False  # must be False when origins is ["*"]
-
+    # The frontend always sends `Authorization: Bearer <token>` (a credentialed
+    # request). Browsers block credentialed requests when allow_origins=["*"].
+    # So we ALWAYS use the explicit origin list, never wildcard, and always
+    # enable allow_credentials=True.
+    #
+    # Dev list (from config): localhost:5173, localhost:3000
+    # Prod list (from config): + production Render URL
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=cors_origins,
-        allow_credentials=cors_credentials,
+        allow_origins=settings.cors_origins,   # explicit list — never "*"
+        allow_credentials=True,                 # required for Authorization header
         allow_methods=["*"],
         allow_headers=["*"],
     )

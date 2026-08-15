@@ -16,6 +16,9 @@ without modification.
 """
 
 import logging
+import math
+import random
+import time
 from typing import Any, Dict, List, Optional
 
 import chromadb
@@ -28,6 +31,14 @@ logger = logging.getLogger(__name__)
 
 # Gemini embedding dimension for gemini-embedding-001
 GEMINI_EMBEDDING_DIM = 3072
+
+# ── Retry / rate-limit constants ──────────────────────────────────────────────
+# Gemini free-tier embedding quota: ~1500 requests/minute, 100 texts/batch.
+# We use small batches + exponential back-off to stay within limits.
+EMBED_BATCH_SIZE   = 20          # texts per Gemini API call (smaller = safer)
+MAX_EMBED_RETRIES  = 6           # max attempts per batch
+EMBED_BASE_DELAY   = 5.0         # initial wait in seconds on first 429
+EMBED_MAX_DELAY    = 120.0       # cap backoff at 2 minutes
 
 
 class VectorStore:
@@ -79,6 +90,10 @@ class VectorStore:
         """
         Generate vector embeddings for a list of texts using Gemini API.
 
+        Retries up to MAX_EMBED_RETRIES times with exponential back-off and
+        jitter on 429 / RESOURCE_EXHAUSTED errors. Other errors are re-raised
+        immediately so the document pipeline can mark the doc as 'error'.
+
         Args:
             texts: List of text strings to embed.
 
@@ -88,15 +103,48 @@ class VectorStore:
         if not texts:
             return []
 
-        try:
-            result = self._gemini_client.models.embed_content(
-                model=self._embedding_model,
-                contents=texts,
-            )
-            return [list(e.values) for e in result.embeddings]
-        except Exception as e:
-            logger.error("Gemini embedding API call failed: %s", e)
-            raise RuntimeError(f"Embedding generation failed: {e}") from e
+        attempt = 0
+        delay = EMBED_BASE_DELAY
+
+        while True:
+            try:
+                result = self._gemini_client.models.embed_content(
+                    model=self._embedding_model,
+                    contents=texts,
+                )
+                return [list(e.values) for e in result.embeddings]
+
+            except Exception as e:
+                err_str = str(e)
+                is_quota = (
+                    "429" in err_str
+                    or "RESOURCE_EXHAUSTED" in err_str
+                    or "quota" in err_str.lower()
+                    or "rate" in err_str.lower()
+                )
+
+                if is_quota and attempt < MAX_EMBED_RETRIES:
+                    attempt += 1
+                    # Exponential backoff with ±25 % jitter
+                    jitter  = delay * 0.25 * (2 * random.random() - 1)
+                    wait    = min(delay + jitter, EMBED_MAX_DELAY)
+                    logger.warning(
+                        "Gemini embedding 429/quota (attempt %d/%d) — "
+                        "waiting %.1f s before retry. Error: %s",
+                        attempt, MAX_EMBED_RETRIES, wait, err_str[:200],
+                    )
+                    time.sleep(wait)
+                    delay = min(delay * 2, EMBED_MAX_DELAY)
+                else:
+                    if is_quota:
+                        logger.error(
+                            "Gemini embedding quota exceeded after %d retries. "
+                            "Check your Gemini API plan and billing. Error: %s",
+                            attempt, err_str[:400],
+                        )
+                    else:
+                        logger.error("Gemini embedding API call failed: %s", e)
+                    raise RuntimeError(f"Embedding generation failed: {e}") from e
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -126,11 +174,15 @@ class VectorStore:
             document_id,
         )
 
-        # Embed in batches of 100 to stay within Gemini API limits
-        batch_size = 100
+        # Embed in batches to stay within Gemini API per-request limits.
+        # _get_embeddings() has built-in retry/backoff for 429 errors.
         all_embeddings: List[List[float]] = []
-        for i in range(0, len(chunks), batch_size):
-            batch = chunks[i : i + batch_size]
+        for i in range(0, len(chunks), EMBED_BATCH_SIZE):
+            batch = chunks[i : i + EMBED_BATCH_SIZE]
+            logger.debug(
+                "Embedding batch %d-%d of %d for document %s",
+                i + 1, min(i + EMBED_BATCH_SIZE, len(chunks)), len(chunks), document_id,
+            )
             batch_embeddings = self._get_embeddings(batch)
             all_embeddings.extend(batch_embeddings)
 
