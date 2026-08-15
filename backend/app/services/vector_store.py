@@ -15,6 +15,7 @@ Public interface is UNCHANGED — all callers (routes, rag_service, chunk_store)
 without modification.
 """
 
+import functools
 import logging
 import math
 import random
@@ -33,12 +34,17 @@ logger = logging.getLogger(__name__)
 GEMINI_EMBEDDING_DIM = 3072
 
 # ── Retry / rate-limit constants ──────────────────────────────────────────────
-# Gemini free-tier embedding quota: ~1500 requests/minute, 100 texts/batch.
-# We use small batches + exponential back-off to stay within limits.
-EMBED_BATCH_SIZE   = 20          # texts per Gemini API call (smaller = safer)
-MAX_EMBED_RETRIES  = 6           # max attempts per batch
-EMBED_BASE_DELAY   = 5.0         # initial wait in seconds on first 429
-EMBED_MAX_DELAY    = 120.0       # cap backoff at 2 minutes
+# Gemini free-tier embedding quota (gemini-embedding-001):
+#   RPD  = 1,000 requests / day
+#   RPM  = 100   requests / minute
+#   TPM  = 30,000 tokens  / minute
+# The API accepts up to 100 texts per embed_content call.
+# We use max-size batches + inter-batch delay + exponential back-off.
+EMBED_BATCH_SIZE        = 100    # max texts per Gemini API call (API limit = 100)
+EMBED_INTER_BATCH_DELAY = 0.7   # seconds to sleep between batches → ≤85 RPM
+MAX_EMBED_RETRIES       = 6     # max attempts per batch on quota errors
+EMBED_BASE_DELAY        = 2.0   # initial wait in seconds on first 429
+EMBED_MAX_DELAY         = 120.0 # cap backoff at 2 minutes
 
 
 class VectorStore:
@@ -174,17 +180,23 @@ class VectorStore:
             document_id,
         )
 
-        # Embed in batches to stay within Gemini API per-request limits.
+        # Embed in batches (max 100 texts per Gemini API call).
+        # EMBED_INTER_BATCH_DELAY prevents exceeding 100 RPM.
         # _get_embeddings() has built-in retry/backoff for 429 errors.
         all_embeddings: List[List[float]] = []
-        for i in range(0, len(chunks), EMBED_BATCH_SIZE):
+        total_batches = math.ceil(len(chunks) / EMBED_BATCH_SIZE)
+        for batch_num, i in enumerate(range(0, len(chunks), EMBED_BATCH_SIZE)):
             batch = chunks[i : i + EMBED_BATCH_SIZE]
-            logger.debug(
-                "Embedding batch %d-%d of %d for document %s",
-                i + 1, min(i + EMBED_BATCH_SIZE, len(chunks)), len(chunks), document_id,
+            logger.info(
+                "Embedding batch %d/%d (%d texts) for document %s",
+                batch_num + 1, total_batches, len(batch), document_id,
             )
             batch_embeddings = self._get_embeddings(batch)
             all_embeddings.extend(batch_embeddings)
+            # Throttle between batches to stay within 100 RPM free-tier limit.
+            # Skip sleep after the last batch — no need to wait.
+            if batch_num < total_batches - 1:
+                time.sleep(EMBED_INTER_BATCH_DELAY)
 
         # Build per-chunk IDs and metadata
         ids = [f"{document_id}_{i}" for i in range(len(chunks))]
@@ -266,7 +278,7 @@ class VectorStore:
             return []
 
         logger.info("Searching vector store for: '%s' (user=%s)", query, user_id or "anon")
-        query_embedding = self._get_embeddings([query])[0]
+        query_embedding = self._embed_query(query)
 
         where_filter: Optional[Dict[str, Any]] = None
 
@@ -331,3 +343,14 @@ class VectorStore:
     def get_collection_count(self) -> int:
         """Return total number of vectors in the collection."""
         return self.collection.count()
+
+    @functools.lru_cache(maxsize=128)
+    def _embed_query(self, query: str) -> List[float]:
+        """
+        Embed a single search query with LRU caching.
+
+        Identical queries (common in chat sessions) return the cached vector
+        instead of making a new Gemini API call, preserving daily RPD quota.
+        Cache holds up to 128 unique query strings per VectorStore instance.
+        """
+        return self._get_embeddings([query])[0]

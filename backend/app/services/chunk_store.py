@@ -9,6 +9,7 @@ This decouples persistent chunk storage from the ephemeral ChromaDB index.
 ChromaDB is rebuilt from persistent chunks if it is empty on startup.
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -187,12 +188,23 @@ async def rebuild_chromadb_from_supabase(db, vector_store) -> int:
         docs[doc_id]["chunks"].append(row["chunk_text"])
 
     rebuilt = 0
-    for doc_id, doc_data in docs.items():
+    total_docs = len(docs)
+
+    if total_docs > 50:
+        logger.warning(
+            "ChromaDB rebuild: %d documents to re-embed. This will make up to %d Gemini API "
+            "calls and may take several minutes. Inter-document delay is applied to stay "
+            "within the 100 RPM free-tier limit.",
+            total_docs, total_docs,
+        )
+
+    for doc_index, (doc_id, doc_data) in enumerate(docs.items()):
         try:
             chunks = doc_data["chunks"]
             meta = doc_data["metadata"]
             logger.info(
-                "Re-embedding %d chunks for document %s...", len(chunks), doc_id
+                "Re-embedding %d chunks for document %s (%d/%d)...",
+                len(chunks), doc_id, doc_index + 1, total_docs,
             )
             vector_store.add_chunks(
                 document_id=doc_id,
@@ -200,6 +212,13 @@ async def rebuild_chromadb_from_supabase(db, vector_store) -> int:
                 metadata=meta,
             )
             rebuilt += 1
+
+            # 1-second pause between documents during rebuild to stay within
+            # Gemini free-tier 100 RPM limit. Skip after the last document.
+            if doc_index < total_docs - 1:
+                import time
+                time.sleep(1.0)
+
         except Exception as e:
             logger.error(
                 "Failed to rebuild chunks for document %s: %s", doc_id, e

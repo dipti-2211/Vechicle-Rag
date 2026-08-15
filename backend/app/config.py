@@ -78,10 +78,15 @@ class Settings(BaseSettings):
     chroma_persist_dir: str = "./data/chroma"
     chroma_collection_name: str = "vehicle_docs"
 
-    # ── RAG Settings ─────────────────────────────────────────────────
-    chunk_size: int = 800
+    # ── RAG Settings ──────────────────────────────────────────────────
+    # chunk_size 1500 chars ≈ 375 tokens; 200 overlap keeps cross-chunk context.
+    # Larger chunks mean fewer total chunks per document → fewer embedding API calls.
+    chunk_size: int = 1500
     chunk_overlap: int = 200
     top_k_results: int = 5
+    # Hard cap: maximum chunks embedded per document.
+    # Prevents a single large file from exhausting the 1,000 RPD free-tier quota.
+    max_chunks_per_doc: int = 200
 
     @property
     def is_production(self) -> bool:

@@ -438,7 +438,7 @@ async def initialize_user(
 
     seeded_docs = []
 
-    for demo in DEMO_DOCUMENTS:
+    for demo_index, demo in enumerate(DEMO_DOCUMENTS):
         doc_id = str(uuid.uuid4())
         filename = f"{doc_id}.txt"
         file_path = upload_dir / filename
@@ -458,21 +458,30 @@ async def initialize_user(
                 user_id=user_id,
             )
 
-            # Launch the processing pipeline (async, non-blocking)
+            # Run the processing pipeline SEQUENTIALLY (not as parallel tasks).
+            # Previously asyncio.create_task() fired all 3 pipelines at once,
+            # causing 3 simultaneous embedding calls that spike over the 100 RPM
+            # free-tier limit. Sequential + 1 s delay keeps us well within limits.
             import asyncio
-            asyncio.create_task(
-                _process_document(
-                    doc_id=doc_id,
-                    file_path=str(file_path),
-                    file_type="txt",
-                    original_filename=demo["filename"],
-                    storage_path=None,
-                    user_id=user_id,
-                )
+            await _process_document(
+                doc_id=doc_id,
+                file_path=str(file_path),
+                file_type="txt",
+                original_filename=demo["filename"],
+                storage_path=None,
+                user_id=user_id,
             )
 
             seeded_docs.append(doc_id)
-            logger.info("Demo document queued for processing: %s -> %s", demo["filename"], doc_id)
+            logger.info(
+                "Demo document processed (%d/%d): %s -> %s",
+                demo_index + 1, len(DEMO_DOCUMENTS), demo["filename"], doc_id,
+            )
+
+            # 1-second pause between demo documents to stay within Gemini RPM.
+            # Skip after the last document — no point waiting.
+            if demo_index < len(DEMO_DOCUMENTS) - 1:
+                await asyncio.sleep(1.0)
 
         except Exception as e:
             logger.error("Failed to seed demo document '%s' for user %s: %s", demo["filename"], user_id, e)
@@ -481,7 +490,7 @@ async def initialize_user(
                 file_path.unlink(missing_ok=True)
             # Non-fatal: continue with other documents
 
-    logger.info("Demo seeding complete for user %s: %d documents queued.", user_id, len(seeded_docs))
+    logger.info("Demo seeding complete for user %s: %d documents processed.", user_id, len(seeded_docs))
     return {
         "seeded": True,
         "documents_queued": len(seeded_docs),

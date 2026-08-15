@@ -140,6 +140,20 @@ async def _process_document(
         if not chunks:
             raise ValueError("Chunker produced zero chunks — document text may be too short.")
 
+        # ── Step 2.5: Cap chunk count ────────────────────────────────────
+        # Guard against very large documents exhausting the Gemini free-tier
+        # daily request quota (1,000 RPD). Each batch of 100 chunks = 1 request,
+        # so 200 chunks max = at most 2 API calls per document.
+        max_chunks = settings.max_chunks_per_doc
+        if len(chunks) > max_chunks:
+            logger.warning(
+                "[%s] Document produced %d chunks — capping to %d to stay within "
+                "Gemini free-tier RPD quota (chunk_size=%d).",
+                doc_id, len(chunks), max_chunks, settings.chunk_size,
+            )
+            chunks = chunks[:max_chunks]
+
+
         # ── Step 3: Embed + Store in ChromaDB ─────────────────────────
         logger.info("[%s] Step 3/3 — Embedding %d chunks...", doc_id, len(chunks))
         vector_store = _get_vector_store()
