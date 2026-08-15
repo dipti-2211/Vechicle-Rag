@@ -248,8 +248,17 @@ export function AuthProvider({ children }) {
   }
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut()
-    if (error) throw error
+    // Always clear local state first so the UI responds immediately.
+    // Server-side session invalidation may fail (e.g. 403 for an already-expired
+    // anonymous session) — that's non-fatal; the local token is discarded regardless.
+    setSession(null)
+    setUser(null)
+    try {
+      await supabase.auth.signOut()
+    } catch (err) {
+      // Non-fatal — local state is already cleared above
+      console.warn('[Auron] Server-side signOut error (non-fatal):', err?.message ?? err)
+    }
   }
 
   const value = {

@@ -33,7 +33,8 @@ class Settings(BaseSettings):
     allowed_origins: str = (
         "http://localhost:5173,"
         "http://localhost:3000,"
-        "https://auron-frontend.onrender.com"
+        "https://auron-vehicle-ai.onrender.com,"
+        "https://auron-vechicle-ai.onrender.com"
     )
 
     @property

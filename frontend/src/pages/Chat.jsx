@@ -9,6 +9,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import toast from 'react-hot-toast';
 import api, { API_BASE_URL } from '../api/axios';
+import { supabase } from '../lib/supabase';
 import { PromptBox } from '../components/ui/chatgpt-prompt-input';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -270,9 +271,16 @@ export default function Chat() {
     let streamedConvId = activeConvId;
 
     try {
+      // Build Authorization header — the streaming endpoint uses the same JWT auth
+      // as all other endpoints, but fetch() doesn't go through the axios interceptor.
+      const { data: { session: streamSession } } = await supabase.auth.getSession()
+      const authHeader = streamSession?.access_token
+        ? { 'Authorization': `Bearer ${streamSession.access_token}` }
+        : {}
+
       const response = await fetch(`${API_BASE_URL}/api/chat/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader },
         body: JSON.stringify({
           question: q,
           conversation_id: activeConvId,

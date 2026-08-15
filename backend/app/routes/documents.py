@@ -147,12 +147,18 @@ async def _process_document(
             "original_filename": original_filename,
             "file_type": file_type,
         }
-        # user_id is passed so chunks are tagged with the owner's ID in ChromaDB
-        vector_store.add_chunks(
-            document_id=doc_id,
-            chunks=chunks,
-            metadata=chunk_metadata,
-            user_id=user_id,
+        # user_id is passed so chunks are tagged with the owner's ID in ChromaDB.
+        # run_in_executor: add_chunks is synchronous and may time.sleep() during
+        # 429 retries — running it in a thread pool prevents blocking the event loop.
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: vector_store.add_chunks(
+                document_id=doc_id,
+                chunks=chunks,
+                metadata=chunk_metadata,
+                user_id=user_id,
+            ),
         )
 
         # ── Step 3.5: Persist chunks to Supabase for restart recovery ──

@@ -4,13 +4,13 @@ import { supabase } from '../lib/supabase'
 /**
  * Determine the API base URL at runtime.
  *
- * Priority order:
- *   1. VITE_API_URL environment variable (set at build time by Render)
- *   2. Runtime detection: localhost → local backend, any other host → production
- *
- * This ensures the app works correctly in BOTH environments:
- *   - Local dev (localhost:5173) → http://localhost:8000
- *   - Production (auron-frontend.onrender.com) → https://auron-backend-un4f.onrender.com
+ * Priority:
+ *   1. VITE_API_URL (set at Render build time)  → use it directly
+ *   2. Local dev (localhost / 127.0.0.1)         → return '' so the Vite
+ *      proxy forwards /api/* to localhost:8000 without any CORS issue.
+ *      An absolute 'http://localhost:8000' would bypass the proxy and
+ *      cause cross-origin errors (port 5173 ≠ port 8000).
+ *   3. Deployed, no VITE_API_URL set             → use hardcoded production URL
  *
  * NOTE: We do NOT set a global Content-Type header here.
  * - For JSON requests, axios automatically sets 'application/json'.
@@ -20,16 +20,17 @@ import { supabase } from '../lib/supabase'
 const PRODUCTION_BACKEND = 'https://auron-backend-un4f.onrender.com'
 
 function getApiBaseUrl() {
-  // 1. Build-time env var (set by Render or .env) — highest priority
+  // 1. Build-time env var (set by Render) — highest priority
   if (import.meta.env.VITE_API_URL) {
     return import.meta.env.VITE_API_URL
   }
-  // 2. Runtime detection — localhost = local dev, anything else = production
+  // 2. Local dev — return '' so Vite proxy handles /api/* (no CORS)
   if (typeof window !== 'undefined') {
     const host = window.location.hostname
     if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') {
-      return 'http://localhost:8000'
+      return ''   // relative URLs → Vite proxy → no cross-origin, no CORS
     }
+    // 3. Deployed without VITE_API_URL — fall back to hardcoded production URL
     return PRODUCTION_BACKEND
   }
   return ''
