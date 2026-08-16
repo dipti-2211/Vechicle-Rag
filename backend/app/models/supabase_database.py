@@ -22,6 +22,11 @@ import re
 from datetime import datetime, timezone
 from typing import Any, List, Optional, Tuple
 
+try:
+    from postgrest.exceptions import APIError as PostgRESTAPIError
+except ImportError:
+    PostgRESTAPIError = Exception  # fallback if package name changes
+
 logger = logging.getLogger(__name__)
 
 
@@ -331,8 +336,17 @@ class SupabaseDatabase:
                 qb = qb.limit(limit)
             return qb.execute()
 
-        result = await self._run(_do)
-        return result.data or []
+        try:
+            result = await self._run(_do)
+            return result.data or []
+        except PostgRESTAPIError as e:
+            # Gracefully handle Postgres errors (e.g. invalid UUID syntax on a
+            # typed uuid column). Return empty list so callers see "no rows".
+            logger.warning(
+                "SupabaseDatabase SELECT error (table=%s): %s — returning []",
+                table, str(e)[:200],
+            )
+            return []
 
     async def _fetch_count(self, query: str, params: list) -> List[dict]:
         """Handle SELECT COUNT(*) queries using PostgREST count."""
@@ -357,8 +371,15 @@ class SupabaseDatabase:
                     qb = qb.eq(col, val)
             return qb.execute()
 
-        result = await self._run(_do)
-        count = result.count if result.count is not None else 0
+        try:
+            result = await self._run(_do)
+            count = result.count if result.count is not None else 0
+        except PostgRESTAPIError as e:
+            logger.warning(
+                "SupabaseDatabase COUNT returned API error (table=%s): %s — returning 0",
+                table, str(e)[:200],
+            )
+            count = 0
 
         # Return in both "count" and named alias forms (e.g. "total", "ready", "error")
         # The services use various aliases — we return all common ones.

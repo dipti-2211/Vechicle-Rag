@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS documents (
     vehicle_name TEXT,
     manufacturer TEXT,
     error_message TEXT,
+    user_id TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -56,6 +57,7 @@ CREATE TABLE IF NOT EXISTS document_chunks (
 CREATE TABLE IF NOT EXISTS conversations (
     id TEXT PRIMARY KEY,
     title TEXT DEFAULT 'New Conversation',
+    user_id TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -75,8 +77,10 @@ CREATE TABLE IF NOT EXISTS messages (
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status);
+CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents(user_id);
 CREATE INDEX IF NOT EXISTS idx_documents_created_at ON documents(created_at);
 CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at);
+CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON document_chunks(document_id);
 """
 
@@ -116,6 +120,9 @@ class Database:
         await self._connection.commit()
 
         # ── Safe migrations for existing databases ────────────────────
+        # Each ALTER TABLE is wrapped in try/except — SQLite raises an error
+        # if the column already exists, which is safe to ignore.
+
         # Add 'rating' column to messages if it doesn't exist yet
         try:
             await self._connection.execute(
@@ -135,6 +142,37 @@ class Database:
             logger.info("Migration: added 'storage_path' column to documents table")
         except Exception:
             pass
+
+        # Add 'user_id' column to documents for per-user isolation
+        try:
+            await self._connection.execute(
+                "ALTER TABLE documents ADD COLUMN user_id TEXT"
+            )
+            await self._connection.commit()
+            logger.info("Migration: added 'user_id' column to documents table")
+        except Exception:
+            pass  # Column already exists — safe to ignore
+
+        # Add 'user_id' column to conversations for per-user isolation
+        try:
+            await self._connection.execute(
+                "ALTER TABLE conversations ADD COLUMN user_id TEXT"
+            )
+            await self._connection.commit()
+            logger.info("Migration: added 'user_id' column to conversations table")
+        except Exception:
+            pass  # Column already exists — safe to ignore
+
+        # Create indexes for user_id lookups (fast per-user queries)
+        for idx_sql in [
+            "CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id)",
+        ]:
+            try:
+                await self._connection.execute(idx_sql)
+                await self._connection.commit()
+            except Exception:
+                pass
 
         logger.info("SQLite database connected: %s", self.db_path)
 

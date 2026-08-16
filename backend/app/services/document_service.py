@@ -350,22 +350,31 @@ class DocumentService:
             total_size_bytes=row["total_size_bytes"] or 0,
         )
 
-    async def get_document_status(self, document_id: str):
+    async def get_document_status(self, document_id: str, user_id: Optional[str] = None):
         """
         Return lightweight status info for a single document (for polling).
 
         Args:
             document_id: The document UUID.
+            user_id: If provided, verifies that the document belongs to this user.
+                     Returns None (→ 404) if the document exists but belongs to
+                     a different user, preventing status-polling of other users' docs.
 
         Returns:
-            DocumentStatusResponse if found, None otherwise.
+            DocumentStatusResponse if found (and owned), None otherwise.
         """
         from app.models.schemas import DocumentStatusResponse
 
-        row = await self.db.fetch_one(
-            "SELECT id, status, chunk_count, error_message FROM documents WHERE id = ?",
-            (document_id,),
-        )
+        if user_id:
+            row = await self.db.fetch_one(
+                "SELECT id, status, chunk_count, error_message FROM documents WHERE id = ? AND user_id = ?",
+                (document_id, user_id),
+            )
+        else:
+            row = await self.db.fetch_one(
+                "SELECT id, status, chunk_count, error_message FROM documents WHERE id = ?",
+                (document_id,),
+            )
         if row is None:
             return None
         return DocumentStatusResponse(

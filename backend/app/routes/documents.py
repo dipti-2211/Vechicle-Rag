@@ -427,10 +427,17 @@ async def list_documents(
     description="Lightweight endpoint for polling a document's processing status.",
     responses={404: {"model": ErrorResponse}},
 )
-async def get_document_status(document_id: str) -> DocumentStatusResponse:
-    """Get just the status fields for a document (efficient for UI polling)."""
+async def get_document_status(
+    document_id: str,
+    user_id: Optional[str] = Depends(get_current_user),
+) -> DocumentStatusResponse:
+    """Get just the status fields for a document (efficient for UI polling).
+
+    Scoped to the authenticated user — returns 404 for documents that
+    belong to a different user, preventing cross-user status polling.
+    """
     service = _get_service()
-    result = await service.get_document_status(document_id)
+    result = await service.get_document_status(document_id, user_id=user_id)
     if result is None:
         raise HTTPException(
             status_code=404,
