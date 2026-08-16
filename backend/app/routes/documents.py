@@ -44,6 +44,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# ── Embedding concurrency gate ────────────────────────────────────────────────
+# Limits simultaneous Gemini embedding calls to 1 across ALL background tasks.
+# If the user uploads 3 files at once, each upload returns 201 immediately, but
+# their embedding stages are serialised here → no concurrent RPM exhaustion.
+_embed_semaphore = asyncio.Semaphore(1)
+
 
 # ── Shared singleton vector store (expensive to init) ────────────────────────
 # We load it once at module level so the embedding model isn't reloaded per request.
@@ -61,6 +67,65 @@ def _get_vector_store() -> VectorStore:
 def _get_service() -> DocumentService:
     """Create a DocumentService with the current database."""
     return DocumentService(get_database())
+
+
+def _friendly_error(raw: str) -> str:
+    """
+    Convert a raw technical exception string into a short, safe user-facing message.
+
+    The full error is always written to the server log; this function only produces
+    the message stored in the database (and shown in the UI).  No credentials,
+    API keys, or internal stack details are included.
+    """
+    low = raw.lower()
+
+    # ── Daily quota (RPD) ────────────────────────────────────────────────────
+    if (
+        "daily" in low
+        or "requests_per_day" in low
+        or "embedcontentrequeststperday" in low
+        or ("quota" in low and "day" in low)
+        or "12:30 pm ist" in low
+    ):
+        return (
+            "Embedding quota exhausted for today (1,000 requests/day free-tier limit). "
+            "Quota resets at 12:30 PM IST. Please try again after the reset."
+        )
+
+    # ── Per-minute quota (RPM / TPM) ─────────────────────────────────────────
+    if "429" in raw or "resource_exhausted" in low or "quota" in low or "rate" in low:
+        return (
+            "Embedding service is temporarily rate-limited. "
+            "Please wait a minute and retry this document."
+        )
+
+    # ── Transport / connection errors ─────────────────────────────────────────
+    if (
+        "disconnected" in low
+        or "connectionterminated" in low
+        or "connection reset" in low
+        or "eof" in low
+        or "broken pipe" in low
+        or "timeout" in low
+        or "timed out" in low
+        or "network" in low
+        or "stream_id" in low
+        or "error_code:1" in low
+    ):
+        return (
+            "Embedding service connection failed (network error). "
+            "Please retry this document."
+        )
+
+    # ── Parser / chunker ──────────────────────────────────────────────────────
+    if "parser" in low or "empty text" in low or "zero chunks" in low or "blank" in low:
+        return (
+            "Could not extract text from this document. "
+            "Check that the file is not blank or image-only, then retry."
+        )
+
+    # ── Generic fallback ──────────────────────────────────────────────────────
+    return "Document processing failed. Please retry the document."
 
 
 # ── Background Processing Pipeline ───────────────────────────────────────────
@@ -155,25 +220,30 @@ async def _process_document(
 
 
         # ── Step 3: Embed + Store in ChromaDB ─────────────────────────
-        logger.info("[%s] Step 3/3 — Embedding %d chunks...", doc_id, len(chunks))
-        vector_store = _get_vector_store()
-        chunk_metadata = {
-            "original_filename": original_filename,
-            "file_type": file_type,
-        }
-        # user_id is passed so chunks are tagged with the owner's ID in ChromaDB.
-        # run_in_executor: add_chunks is synchronous and may time.sleep() during
-        # 429 retries — running it in a thread pool prevents blocking the event loop.
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            None,
-            lambda: vector_store.add_chunks(
-                document_id=doc_id,
-                chunks=chunks,
-                metadata=chunk_metadata,
-                user_id=user_id,
-            ),
-        )
+        # _embed_semaphore ensures only ONE document is embedding at a time
+        # across all concurrent background tasks.  If another upload is already
+        # embedding, this task waits here until that one finishes.
+        logger.info("[%s] Step 3/3 — Waiting for embedding slot (%d chunks)...", doc_id, len(chunks))
+        async with _embed_semaphore:
+            logger.info("[%s] Step 3/3 — Embedding %d chunks...", doc_id, len(chunks))
+            vector_store = _get_vector_store()
+            chunk_metadata = {
+                "original_filename": original_filename,
+                "file_type": file_type,
+            }
+            # user_id is passed so chunks are tagged with the owner's ID in ChromaDB.
+            # run_in_executor: add_chunks is synchronous and may time.sleep() during
+            # 429 retries — running it in a thread pool prevents blocking the event loop.
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: vector_store.add_chunks(
+                    document_id=doc_id,
+                    chunks=chunks,
+                    metadata=chunk_metadata,
+                    user_id=user_id,
+                ),
+            )
 
         # ── Step 3.5: Persist chunks to Supabase for restart recovery ──
         logger.info("[%s] Step 3.5 — Persisting chunks to database...", doc_id)
@@ -211,11 +281,12 @@ async def _process_document(
         )
 
     except Exception as e:
-        logger.error("Pipeline failed for document %s: %s", doc_id, e)
+        raw_err = str(e)
+        logger.error("Pipeline failed for document %s: %s", doc_id, raw_err)
         await service.update_document_status(
             document_id=doc_id,
             status="error",
-            error_message=str(e),
+            error_message=_friendly_error(raw_err),
         )
 
 

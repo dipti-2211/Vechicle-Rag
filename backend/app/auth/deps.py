@@ -12,6 +12,11 @@ Security model:
   - `require_user` raises HTTP 401 if no valid JWT was provided.
 
 The service role key is NOT used here — it stays in config for DB operations.
+
+JWT Secret encoding note:
+  Supabase/GoTrue signs tokens with []byte(rawSecret) — i.e., the UTF-8 bytes
+  of the JWT secret string as-is. PyJWT accepts the raw string directly and
+  treats it the same way. Do NOT base64-decode the secret before passing it here.
 """
 
 import logging
@@ -48,8 +53,8 @@ def get_current_user(request: Request) -> Optional[str]:
 
     jwt_secret = settings.supabase_jwt_secret
     if not jwt_secret:
-        # JWT secret not configured — log warning and skip verification
-        # This allows local dev without auth to keep working
+        # JWT secret not configured — log warning and skip verification.
+        # This allows local dev without auth to keep working.
         logger.warning(
             "SUPABASE_JWT_SECRET is not set — JWT verification skipped. "
             "All requests will be treated as unauthenticated."
@@ -59,11 +64,14 @@ def get_current_user(request: Request) -> Optional[str]:
     try:
         payload = jwt.decode(
             token,
-            jwt_secret,
+            jwt_secret,                 # raw string — matches GoTrue []byte(secret)
             algorithms=["HS256"],
             options={"verify_aud": False},  # Supabase tokens use 'authenticated' audience
         )
         user_id: Optional[str] = payload.get("sub")
+        if not user_id:
+            logger.debug("JWT verified but 'sub' claim is missing")
+            return None
         return user_id
     except jwt.ExpiredSignatureError:
         logger.debug("JWT token expired")

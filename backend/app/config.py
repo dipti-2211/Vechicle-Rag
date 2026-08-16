@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     # ── Google Gemini ────────────────────────────────────────────────
     gemini_api_key: str = ""
     gemini_llm_model: str = "gemini-3.1-flash-lite"
-    gemini_embedding_model: str = "gemini-embedding-001"
+    gemini_embedding_model: str = "gemini-embedding-2"
     gemini_embedding_dimensions: int = 3072
 
     # ── ChromaDB ─────────────────────────────────────────────────────

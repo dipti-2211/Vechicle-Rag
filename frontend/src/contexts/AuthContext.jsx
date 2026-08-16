@@ -79,16 +79,25 @@ export function AuthProvider({ children }) {
 
   // ── Demo-data seeding (permanent accounts only) ───────────────────────────
   const initializeUser = async (accessToken) => {
+    // Guard: never fire the request if there's no valid token — would return 401.
+    if (!accessToken) {
+      console.warn('[Auron] initializeUser skipped: no access token available.')
+      return
+    }
+    // Safe debug — never log the actual token value.
+    console.debug('[Auron] initializeUser: session exists: true | access token exists:', !!accessToken)
     try {
       await api.post(
         '/api/auth/initialize-user',
         {},
         { headers: { Authorization: `Bearer ${accessToken}` } }
       )
+      console.debug('[Auron] initializeUser: request completed successfully')
     } catch (err) {
       console.warn('[Auron] User initialization failed:', err?.response?.data ?? err.message)
     }
   }
+
 
   // ── Create a brand-new anonymous session ──────────────────────────────────
   // Shared by both the startup auto-refresh and the manual "Stay Anonymous" click.
@@ -118,6 +127,7 @@ export function AuthProvider({ children }) {
           // We mark refreshingAnonRef so the onAuthStateChange listener
           // ignores intermediate SIGNED_OUT events from our own sign-out.
           // ─────────────────────────────────────────────────────────────────
+          console.debug('[Auron] Startup: persisted anonymous session detected — refreshing to new UID.')
           refreshingAnonRef.current = true
           try {
             const freshData = await _createFreshAnonSession()
@@ -182,6 +192,12 @@ export function AuthProvider({ children }) {
           !isAnonUser(s.user) &&
           !initializedRef.current.has(s.user.id)
         ) {
+          console.debug(
+            '[Auron] onAuthStateChange SIGNED_IN:',
+            'user exists:', !!s.user,
+            '| is anonymous:', isAnonUser(s.user),
+            '| access token exists:', !!s.access_token,
+          )
           initializedRef.current.add(s.user.id)
           await initializeUser(s.access_token)
         }

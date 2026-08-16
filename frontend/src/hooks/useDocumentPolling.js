@@ -4,7 +4,7 @@ import api from '../api/axios';
 /**
  * Hook that fetches the document list and auto-polls while any document
  * is in 'processing' status. Polling stops automatically once all documents
- * reach a terminal state ('ready' or 'error').
+ * reach a terminal state ('ready' or 'error'), or after 3 consecutive errors.
  *
  * Usage:
  *   const { documents, loading, error, refetch } = useDocumentPolling();
@@ -19,6 +19,7 @@ export function useDocumentPolling(intervalMs = 3000) {
   const [error, setError]         = useState(null);
   const intervalRef               = useRef(null);
   const mountedRef                = useRef(true);
+  const errorCountRef             = useRef(0);  // stop after 3 consecutive fetch failures
 
   const fetchDocuments = useCallback(async () => {
     try {
@@ -28,6 +29,7 @@ export function useDocumentPolling(intervalMs = 3000) {
       const docs = res.data.documents ?? [];
       setDocuments(docs);
       setError(null);
+      errorCountRef.current = 0;  // reset error streak on success
 
       // Check if any document is still processing
       const hasProcessing = docs.some(d => d.status === 'processing');
@@ -45,7 +47,14 @@ export function useDocumentPolling(intervalMs = 3000) {
     } catch (err) {
       if (!mountedRef.current) return;
       setError(err?.response?.data?.detail ?? 'Failed to load documents.');
-      // Don't stop polling on error — retry on next tick
+      errorCountRef.current += 1;
+
+      // Stop polling after 3 consecutive errors (e.g. auth expired, backend down).
+      // The user can manually click Retry to resume.
+      if (errorCountRef.current >= 3 && intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
     } finally {
       if (mountedRef.current) {
         setLoading(false);
@@ -74,6 +83,7 @@ export function useDocumentPolling(intervalMs = 3000) {
   const refetch = useCallback(() => {
     // Reset loading for manual refresh
     setLoading(true);
+    errorCountRef.current = 0;  // reset error streak on manual retry
     // Stop existing timer before re-fetching
     if (intervalRef.current) {
       clearInterval(intervalRef.current);

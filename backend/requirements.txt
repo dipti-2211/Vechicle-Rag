@@ -40,7 +40,7 @@ google-genai==1.14.0
 chromadb==1.5.9
 
 # ── Embeddings ────────────────────────────────────────────────────────────────
-# Embeddings are now generated via the Gemini API (gemini-embedding-001).
+# Embeddings are now generated via the Gemini API (gemini-embedding-2).
 # sentence-transformers and torch are NOT needed — they consumed ~472MB RAM,
 # causing OOM on Render's 512MB free-tier instance.
 # google-genai (already listed above) provides the embedding client.

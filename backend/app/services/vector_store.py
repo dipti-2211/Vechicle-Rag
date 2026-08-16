@@ -2,13 +2,13 @@
 Vehicle Intelligence Assistant — Vector Store Service
 
 Manages ChromaDB for vector storage and semantic retrieval.
-Uses Google Gemini API (gemini-embedding-001) for embeddings —
+Uses Google Gemini API (gemini-embedding-2) for embeddings —
 zero local model memory, no sentence-transformers download required.
 
 This replaces the previous sentence-transformers (all-MiniLM-L6-v2) implementation
 to fit within Render's 512 MB free-tier memory limit.
 
-Embedding dimensions: 3072 (Gemini gemini-embedding-001 default)
+Embedding dimensions: 3072 (gemini-embedding-2 — same as gemini-embedding-001)
 Distance metric: cosine similarity
 
 Public interface is UNCHANGED — all callers (routes, rag_service, chunk_store) work
@@ -19,6 +19,7 @@ import functools
 import logging
 import math
 import random
+import re
 import time
 from typing import Any, Dict, List, Optional
 
@@ -30,11 +31,11 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Gemini embedding dimension for gemini-embedding-001
+# Gemini embedding dimension for gemini-embedding-2 (same as gemini-embedding-001: 3072)
 GEMINI_EMBEDDING_DIM = 3072
 
 # ── Retry / rate-limit constants ──────────────────────────────────────────────
-# Gemini free-tier embedding quota (gemini-embedding-001):
+# Gemini free-tier embedding quota (gemini-embedding-2):
 #   RPD  = 1,000 requests / day
 #   RPM  = 100   requests / minute
 #   TPM  = 30,000 tokens  / minute
@@ -42,9 +43,11 @@ GEMINI_EMBEDDING_DIM = 3072
 # We use max-size batches + inter-batch delay + exponential back-off.
 EMBED_BATCH_SIZE        = 100    # max texts per Gemini API call (API limit = 100)
 EMBED_INTER_BATCH_DELAY = 0.7   # seconds to sleep between batches → ≤85 RPM
-MAX_EMBED_RETRIES       = 6     # max attempts per batch on quota errors
-EMBED_BASE_DELAY        = 2.0   # initial wait in seconds on first 429
-EMBED_MAX_DELAY         = 120.0 # cap backoff at 2 minutes
+# Retry only on per-MINUTE (RPM/TPM) 429s — retrying makes no sense for daily
+# (RPD) quota exhaustion since no wait time will restore it until tomorrow.
+MAX_EMBED_RETRIES       = 2     # reduced from 6: fail fast on daily quota exhaustion
+EMBED_BASE_DELAY        = 5.0   # initial wait in seconds on first per-minute 429
+EMBED_MAX_DELAY         = 65.0  # cap backoff at 65 s (respects Gemini’s ~60 s window)
 
 
 class VectorStore:
@@ -96,9 +99,13 @@ class VectorStore:
         """
         Generate vector embeddings for a list of texts using Gemini API.
 
-        Retries up to MAX_EMBED_RETRIES times with exponential back-off and
-        jitter on 429 / RESOURCE_EXHAUSTED errors. Other errors are re-raised
-        immediately so the document pipeline can mark the doc as 'error'.
+        Handles three error categories differently:
+        - RPD (per-day) quota exhaustion: fail immediately — no retry will help.
+        - RPM / TPM (per-minute) quota: retry up to MAX_EMBED_RETRIES times,
+          honoring Gemini's retryDelay hint when present.
+        - Transport errors (connection reset / server disconnected / timeout):
+          retry up to MAX_EMBED_RETRIES times with short backoff — these are
+          transient network blips, not quota issues.
 
         Args:
             texts: List of text strings to embed.
@@ -122,35 +129,104 @@ class VectorStore:
 
             except Exception as e:
                 err_str = str(e)
+                err_lower = err_str.lower()
+
+                # ── Category 1: Daily quota exhausted (RPD) ──────────────────
+                # Retrying will NOT help — quota resets after ~24 hours.
+                is_daily_exhausted = (
+                    "EmbedContentRequestsPerDay" in err_str
+                    or "per_day" in err_lower
+                    or "requests_per_day" in err_lower
+                    or ("quota" in err_lower and "day" in err_lower)
+                )
+                if is_daily_exhausted:
+                    logger.error(
+                        "Gemini DAILY embedding quota exhausted (RPD=1000). "
+                        "No retries — quota resets at midnight Pacific Time. Error: %s",
+                        err_str[:400],
+                    )
+                    raise RuntimeError(
+                        "Embedding generation failed: daily Gemini API quota exhausted "
+                        "(1,000 requests/day free-tier limit reached). "
+                        "Quota resets at 12:30 PM IST. Please wait or upgrade your API plan."
+                    ) from e
+
+                # ── Category 2: Per-minute quota (RPM / TPM) ─────────────────
                 is_quota = (
                     "429" in err_str
                     or "RESOURCE_EXHAUSTED" in err_str
-                    or "quota" in err_str.lower()
-                    or "rate" in err_str.lower()
+                    or "quota" in err_lower
+                    or "rate" in err_lower
                 )
 
-                if is_quota and attempt < MAX_EMBED_RETRIES:
+                # ── Category 3: Transport / network errors ────────────────────
+                # "Server disconnected without sending a response" → httpx TCP drop
+                # "ConnectionTerminated error_code:1" → HTTP/2 GOAWAY frame from Gemini
+                # "StreamClosedError" → HTTP/2 stream closed before response complete
+                is_transport = (
+                    "disconnected" in err_lower
+                    or "connection reset" in err_lower
+                    or "eof" in err_lower
+                    or "broken pipe" in err_lower
+                    or "connection error" in err_lower
+                    or "remotedisconnected" in err_lower
+                    or "incompleteread" in err_lower
+                    or "timeout" in err_lower
+                    or "timed out" in err_lower
+                    or "connection refused" in err_lower
+                    or "network" in err_lower
+                    # HTTP/2 specific errors from google-api-core / httpx
+                    or "connectionterminated" in err_lower
+                    or "streamclosederror" in err_lower
+                    or "h2.exceptions" in err_lower
+                    or "goaway" in err_lower
+                    or "stream_id" in err_lower
+                    or "error_code:1" in err_lower
+                    or "last_stream_id" in err_lower
+                    or "protocolerror" in err_lower
+                )
+
+                should_retry = (is_quota or is_transport) and attempt < MAX_EMBED_RETRIES
+
+                if should_retry:
                     attempt += 1
-                    # Exponential backoff with ±25 % jitter
-                    jitter  = delay * 0.25 * (2 * random.random() - 1)
-                    wait    = min(delay + jitter, EMBED_MAX_DELAY)
+                    if is_quota:
+                        # Honour Gemini's retryDelay hint when present (e.g. "53s")
+                        retry_match = re.search(r"retryDelay[^\d]*(\d+(?:\.\d+)?)", err_str)
+                        if retry_match:
+                            wait = min(float(retry_match.group(1)) + 1.0, EMBED_MAX_DELAY)
+                        else:
+                            jitter = delay * 0.25 * (2 * random.random() - 1)
+                            wait   = min(delay + jitter, EMBED_MAX_DELAY)
+                        label = "per-minute quota"
+                    else:
+                        # Transport error: short fixed backoff (3–6 s)
+                        wait  = min(3.0 * attempt, 10.0)
+                        label = "transport error"
+
                     logger.warning(
-                        "Gemini embedding 429/quota (attempt %d/%d) — "
+                        "Gemini embedding %s (attempt %d/%d) — "
                         "waiting %.1f s before retry. Error: %s",
-                        attempt, MAX_EMBED_RETRIES, wait, err_str[:200],
+                        label, attempt, MAX_EMBED_RETRIES, wait, err_str[:300],
                     )
                     time.sleep(wait)
                     delay = min(delay * 2, EMBED_MAX_DELAY)
                 else:
                     if is_quota:
                         logger.error(
-                            "Gemini embedding quota exceeded after %d retries. "
-                            "Check your Gemini API plan and billing. Error: %s",
+                            "Gemini embedding quota exceeded after %d retries. Error: %s",
+                            attempt, err_str[:400],
+                        )
+                    elif is_transport:
+                        logger.error(
+                            "Gemini embedding transport error after %d retries. "
+                            "Check network connectivity. Error: %s",
                             attempt, err_str[:400],
                         )
                     else:
                         logger.error("Gemini embedding API call failed: %s", e)
                     raise RuntimeError(f"Embedding generation failed: {e}") from e
+
 
     # ── Public API ────────────────────────────────────────────────────────────
 

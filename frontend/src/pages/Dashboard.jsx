@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FileText, MessageSquare, UploadCloud, CheckCircle,
@@ -8,7 +8,6 @@ import {
 } from 'lucide-react';
 
 import api from '../api/axios';
-import { useDocumentPolling } from '../hooks/useDocumentPolling';
 
 function formatBytes(bytes) {
   if (!bytes) return '0 B';
@@ -119,12 +118,38 @@ export default function Dashboard() {
 
   useEffect(() => { fetchAll(); }, []);
 
-  // Poll when documents are processing
-  useDocumentPolling(
-    stats?.processing > 0,
-    () => api.get('/api/documents/stats').then(r => setStats(r.data)),
-    4000,
-  );
+  // ── Controlled stats polling while any document is processing ────────────
+  // IMPORTANT: do NOT use useDocumentPolling() here — that hook only accepts
+  // (intervalMs) as its argument. Passing (boolean, fn, number) sets
+  // intervalMs=1 (true→1), causing ~1000 requests/second (request storm).
+  const statsTimerRef = useRef(null);
+  useEffect(() => {
+    if (stats?.processing > 0) {
+      // Some docs still processing — poll stats every 5 s
+      if (!statsTimerRef.current) {
+        statsTimerRef.current = setInterval(async () => {
+          try {
+            const r = await api.get('/api/documents/stats');
+            setStats(r.data);
+          } catch {
+            // ignore transient fetch errors during polling
+          }
+        }, 5000);
+      }
+    } else {
+      // All settled — stop polling
+      if (statsTimerRef.current) {
+        clearInterval(statsTimerRef.current);
+        statsTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (statsTimerRef.current) {
+        clearInterval(statsTimerRef.current);
+        statsTimerRef.current = null;
+      }
+    };
+  }, [stats?.processing]);
 
   // Skeleton
   if (loading) return (
