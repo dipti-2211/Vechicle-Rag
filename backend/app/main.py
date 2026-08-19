@@ -136,6 +136,10 @@ async def lifespan(app: FastAPI):
     # On startup, we find any stuck 'processing' docs and either retry or mark as error.
     # NOTE: VectorStore is NOT pre-loaded here — it is lazy-initialized on first request
     # to avoid loading the embedding model (Gemini API client) unnecessarily at startup.
+    #
+    # Documents are processed SEQUENTIALLY (not in parallel) with a delay between each
+    # to avoid triggering the Gemini embedding-quota rate-limit cascade that occurs when
+    # multiple documents fire simultaneous embedding API calls at startup.
     try:
         db = get_database()
         stuck_rows = await db.fetch_all(
@@ -144,47 +148,66 @@ async def lifespan(app: FastAPI):
         )
         if stuck_rows:
             logger.warning(
-                "⚠️  Found %d document(s) stuck in 'processing' — attempting recovery...",
+                "⚠️  Found %d document(s) stuck in 'processing' — attempting sequential recovery...",
                 len(stuck_rows),
             )
             service = DocumentService(db)
-            for row in stuck_rows:
-                doc_id = row["id"]
-                file_path = row.get("file_path", "")
-                original_filename = row.get("original_filename", "unknown")
-                file_type = row.get("file_type", "")
 
-                if file_path and Path(file_path).exists():
-                    # File is on disk — re-queue background processing
-                    logger.info(
-                        "Recovery: re-processing document %s (%s)...",
-                        doc_id, original_filename,
-                    )
-                    from app.routes.documents import _process_document
-                    asyncio.create_task(
-                        _process_document(
-                            doc_id=doc_id,
-                            file_path=file_path,
-                            file_type=file_type,
-                            original_filename=original_filename,
-                            storage_path=row.get("storage_path"),
-                            user_id=row.get("user_id"),  # preserve ownership if available
+            async def _sequential_recovery(rows, svc):
+                """
+                Re-process stuck documents one at a time.
+
+                Runs as a single background task (via asyncio.create_task) so startup
+                is not blocked, but each document is awaited to completion before the
+                next one starts. A 5-second sleep between documents gives the Gemini
+                embedding API headroom to reset its per-minute request window.
+                """
+                from app.routes.documents import _process_document
+                for row in rows:
+                    doc_id = row["id"]
+                    file_path = row.get("file_path", "")
+                    original_filename = row.get("original_filename", "unknown")
+                    file_type = row.get("file_type", "")
+
+                    if file_path and Path(file_path).exists():
+                        # File is on disk — re-process and await completion
+                        logger.info(
+                            "Recovery: re-processing document %s (%s)...",
+                            doc_id, original_filename,
                         )
-                    )
-                else:
-                    # File missing (ephemeral disk was wiped) — mark as error
-                    logger.warning(
-                        "Recovery: file missing for %s (%s) — marking as error.",
-                        doc_id, original_filename,
-                    )
-                    await service.update_document_status(
-                        document_id=doc_id,
-                        status="error",
-                        error_message=(
-                            "Processing was interrupted (server restart). "
-                            "Please re-upload this document."
-                        ),
-                    )
+                        try:
+                            await _process_document(
+                                doc_id=doc_id,
+                                file_path=file_path,
+                                file_type=file_type,
+                                original_filename=original_filename,
+                                storage_path=row.get("storage_path"),
+                                user_id=row.get("user_id"),  # preserve ownership
+                            )
+                        except Exception as proc_err:
+                            logger.error(
+                                "Recovery: processing failed for %s (%s): %s",
+                                doc_id, original_filename, proc_err,
+                            )
+                        # Breathing room between documents — prevents Gemini RPM burst
+                        await asyncio.sleep(5)
+                    else:
+                        # File missing (ephemeral disk was wiped) — mark as error immediately
+                        logger.warning(
+                            "Recovery: file missing for %s (%s) — marking as error.",
+                            doc_id, original_filename,
+                        )
+                        await svc.update_document_status(
+                            document_id=doc_id,
+                            status="error",
+                            error_message=(
+                                "Processing was interrupted (server restart). "
+                                "Please re-upload this document."
+                            ),
+                        )
+
+            asyncio.create_task(_sequential_recovery(stuck_rows, service))
+
     except Exception as recovery_err:
         logger.error("Startup recovery failed: %s", recovery_err)
 

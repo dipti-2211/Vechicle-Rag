@@ -54,7 +54,7 @@ services:
         value: "50"
       # CORS — allow the deployed frontend (and localhost for local dev)
       - key: ALLOWED_ORIGINS
-        value: "https://auron-frontend.onrender.com,http://localhost:5173,http://localhost:3000"
+        value: "https://auron-vechicle-ai.onrender.com,http://localhost:5173,http://localhost:3000"
       # Supabase Storage bucket name
       - key: SUPABASE_STORAGE_BUCKET
         value: documents
