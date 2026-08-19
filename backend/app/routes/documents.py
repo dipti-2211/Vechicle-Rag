@@ -22,7 +22,7 @@ from typing import Optional
 import aiofiles
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File, status
 
-from app.auth.deps import get_current_user
+from app.auth.deps import get_current_user, CurrentUser
 from app.config import get_settings
 from app.models.database import get_database
 from app.models.schemas import (
@@ -306,7 +306,7 @@ async def _process_document(
 async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    user_id: Optional[str] = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> DocumentResponse:
     """Handle document upload, save file, create DB record, and trigger processing."""
     settings = get_settings()
@@ -359,7 +359,7 @@ async def upload_document(
             file_size=size,
             file_path=str(file_path),
             doc_id=doc_id,
-            user_id=user_id,
+            user_id=current_user.user_id,
         )
     except Exception as e:
         logger.error("Error creating document record: %s", e)
@@ -375,7 +375,7 @@ async def upload_document(
         file_type=file_type,
         original_filename=file.filename,
         storage_path=None,
-        user_id=user_id,
+        user_id=current_user.user_id,
     )
 
     logger.info("Upload accepted for %s (%s). Background processing queued.", doc_id, file.filename)
@@ -389,11 +389,11 @@ async def upload_document(
     description="Returns aggregate statistics: total, ready, processing, and error counts, plus total chunks and storage used.",
 )
 async def get_document_stats(
-    user_id: Optional[str] = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> DocumentStats:
     """Get aggregate document statistics for the current user."""
     service = _get_service()
-    return await service.get_document_stats(user_id=user_id)
+    return await service.get_document_stats(user_id=current_user.user_id)
 
 
 @router.get(
@@ -413,11 +413,11 @@ async def list_documents(
         description="Filter by file type: pdf, csv, xlsx, docx, or txt",
         pattern="^(pdf|csv|xlsx|docx|txt)$",
     ),
-    user_id: Optional[str] = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> DocumentListResponse:
     """List documents for the current user with optional filters."""
     service = _get_service()
-    return await service.list_documents(status=status, file_type=file_type, user_id=user_id)
+    return await service.list_documents(status=status, file_type=file_type, user_id=current_user.user_id)
 
 
 @router.get(
@@ -429,7 +429,7 @@ async def list_documents(
 )
 async def get_document_status(
     document_id: str,
-    user_id: Optional[str] = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> DocumentStatusResponse:
     """Get just the status fields for a document (efficient for UI polling).
 
@@ -437,7 +437,7 @@ async def get_document_status(
     belong to a different user, preventing cross-user status polling.
     """
     service = _get_service()
-    result = await service.get_document_status(document_id, user_id=user_id)
+    result = await service.get_document_status(document_id, user_id=current_user.user_id)
     if result is None:
         raise HTTPException(
             status_code=404,
@@ -455,11 +455,11 @@ async def get_document_status(
 )
 async def get_document(
     document_id: str,
-    user_id: Optional[str] = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> DocumentResponse:
     """Get a single document by ID (user-scoped)."""
     service = _get_service()
-    doc = await service.get_document(document_id, user_id=user_id)
+    doc = await service.get_document(document_id, user_id=current_user.user_id)
 
     if doc is None:
         raise HTTPException(
@@ -479,13 +479,13 @@ async def get_document(
 )
 async def delete_document(
     document_id: str,
-    user_id: Optional[str] = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> DocumentDeleteResponse:
     """Delete a document, its file on disk, Supabase Storage file, and its vectors in ChromaDB."""
     service = _get_service()
 
     # Confirm the document exists (and belongs to this user)
-    doc = await service.get_document(document_id, user_id=user_id)
+    doc = await service.get_document(document_id, user_id=current_user.user_id)
     if doc is None:
         raise HTTPException(
             status_code=404,
@@ -516,7 +516,7 @@ async def delete_document(
         logger.warning("Could not delete Supabase Storage file for %s: %s", document_id, e)
 
     # 3. Delete file from disk + record from database
-    result = await service.delete_document(document_id, user_id=user_id)
+    result = await service.delete_document(document_id, user_id=current_user.user_id)
     if result is None:
         raise HTTPException(
             status_code=404,
@@ -540,7 +540,7 @@ async def delete_document(
 )
 async def preview_document(
     document_id: str,
-    user_id: Optional[str] = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> DocumentPreviewResponse:
     """
     Parse the stored file and return a content preview.
@@ -549,7 +549,7 @@ async def preview_document(
     PREVIEW_CHARS = 800
 
     service = _get_service()
-    doc = await service.get_document(document_id, user_id=user_id)
+    doc = await service.get_document(document_id, user_id=current_user.user_id)
     if doc is None:
         raise HTTPException(
             status_code=404,

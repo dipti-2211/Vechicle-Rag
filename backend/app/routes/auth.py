@@ -22,7 +22,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.auth.deps import require_user
+from app.auth.deps import require_user, CurrentUser
 from app.config import get_settings
 from app.models.database import get_database
 from app.services.document_service import DocumentService
@@ -409,7 +409,7 @@ Road assistance: Check your vehicle insurance card for the roadside assistance n
     ),
 )
 async def initialize_user(
-    user_id: str = Depends(require_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> dict:
     """
     Seed demo documents for a new user.
@@ -426,12 +426,12 @@ async def initialize_user(
     from app.routes.documents import _process_document
 
     # ── Check if user already has documents (idempotent guard) ────────
-    existing_count = await service.get_document_count(user_id=user_id)
+    existing_count = await service.get_document_count(user_id=current_user.user_id)
     if existing_count > 0:
-        logger.info("User %s already has %d documents — skipping demo seeding.", user_id, existing_count)
+        logger.info("User %s already has %d documents — skipping demo seeding.", current_user.user_id, existing_count)
         return {"seeded": False, "reason": "already_initialized", "document_count": existing_count}
 
-    logger.info("Seeding demo documents for new user: %s", user_id)
+    logger.info("Seeding demo documents for new user: %s", current_user.user_id)
 
     upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -455,7 +455,7 @@ async def initialize_user(
                 file_size=file_size,
                 file_path=str(file_path),
                 doc_id=doc_id,
-                user_id=user_id,
+                user_id=current_user.user_id,
             )
 
             # Run the processing pipeline SEQUENTIALLY (not as parallel tasks).
@@ -469,7 +469,7 @@ async def initialize_user(
                 file_type="txt",
                 original_filename=demo["filename"],
                 storage_path=None,
-                user_id=user_id,
+                user_id=current_user.user_id,
             )
 
             seeded_docs.append(doc_id)
@@ -484,13 +484,13 @@ async def initialize_user(
                 await asyncio.sleep(1.0)
 
         except Exception as e:
-            logger.error("Failed to seed demo document '%s' for user %s: %s", demo["filename"], user_id, e)
+            logger.error("Failed to seed demo document '%s' for user %s: %s", demo["filename"], current_user.user_id, e)
             # Clean up the file if DB record creation failed
             if file_path.exists():
                 file_path.unlink(missing_ok=True)
             # Non-fatal: continue with other documents
 
-    logger.info("Demo seeding complete for user %s: %d documents processed.", user_id, len(seeded_docs))
+    logger.info("Demo seeding complete for user %s: %d documents processed.", current_user.user_id, len(seeded_docs))
     return {
         "seeded": True,
         "documents_queued": len(seeded_docs),
@@ -516,7 +516,7 @@ async def initialize_user(
     ),
 )
 async def delete_account(
-    user_id: str = Depends(require_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> dict:
     """
     Permanently and safely delete the authenticated user's account.
@@ -532,7 +532,7 @@ async def delete_account(
     settings = get_settings()
     db = get_database()
 
-    logger.info("Account deletion started for user: %s", user_id)
+    logger.info("Account deletion started for user: %s", current_user.user_id)
 
     # ── Import helpers ────────────────────────────────────────────────
     from app.services.supabase_client import get_supabase_client, delete_file_from_storage
@@ -541,11 +541,11 @@ async def delete_account(
     # We need file_path and storage_path before the rows are gone.
     doc_rows = await db.fetch_all(
         "SELECT id, file_path, storage_path, original_filename FROM documents WHERE user_id = ?",
-        (user_id,),
+        (current_user.user_id,),
     )
     logger.info(
         "Found %d document(s) owned by user %s.",
-        len(doc_rows), user_id,
+        len(doc_rows), current_user.user_id,
     )
 
     # ── 2. Delete local disk files ─────────────────────────────────────────────
@@ -579,44 +579,44 @@ async def delete_account(
         vs = _get_vector_store()
         # ChromaDB stores user_id in chunk metadata — delete all chunks belonging to this user
         existing = vs.collection.get(
-            where={"user_id": user_id},
+            where={"user_id": current_user.user_id},
             include=[],
         )
         chunk_ids = existing.get("ids", [])
         if chunk_ids:
             vs.collection.delete(ids=chunk_ids)
-            logger.info("Deleted %d ChromaDB vectors for user %s.", len(chunk_ids), user_id)
+            logger.info("Deleted %d ChromaDB vectors for user %s.", len(chunk_ids), current_user.user_id)
         else:
-            logger.info("No ChromaDB vectors found for user %s.", user_id)
+            logger.info("No ChromaDB vectors found for user %s.", current_user.user_id)
     except Exception as e:
-        logger.warning("ChromaDB cleanup failed for user %s: %s", user_id, e)
+        logger.warning("ChromaDB cleanup failed for user %s: %s", current_user.user_id, e)
 
     # ── 5. Delete conversations (cascades → messages) ──────────────────────────
     try:
         await db.execute(
             "DELETE FROM conversations WHERE user_id = ?",
-            (user_id,),
+            (current_user.user_id,),
         )
-        logger.info("Deleted conversations for user %s.", user_id)
+        logger.info("Deleted conversations for user %s.", current_user.user_id)
     except Exception as e:
-        logger.warning("Failed to delete conversations for user %s: %s", user_id, e)
+        logger.warning("Failed to delete conversations for user %s: %s", current_user.user_id, e)
 
     # ── 6. Delete documents (cascades → document_chunks) ──────────────────────
     try:
         await db.execute(
             "DELETE FROM documents WHERE user_id = ?",
-            (user_id,),
+            (current_user.user_id,),
         )
-        logger.info("Deleted document records for user %s.", user_id)
+        logger.info("Deleted document records for user %s.", current_user.user_id)
     except Exception as e:
-        logger.warning("Failed to delete document records for user %s: %s", user_id, e)
+        logger.warning("Failed to delete document records for user %s: %s", current_user.user_id, e)
 
     # ── 7. Delete auth.users row (cascades → profiles, user_preferences) ───────
     # This MUST be last — it requires the service-role key.
     if not settings.supabase_configured:
         logger.error(
             "Supabase not configured — cannot delete auth record for user %s. "
-            "Local data has been cleaned up but the auth row remains.", user_id,
+            "Local data has been cleaned up but the auth row remains.", current_user.user_id,
         )
         raise HTTPException(
             status_code=503,
@@ -632,10 +632,10 @@ async def delete_account(
             settings.supabase_url,
             settings.supabase_service_role_key,
         )
-        admin_client.auth.admin.delete_user(user_id)
-        logger.info("auth.users row deleted for user %s — account fully purged.", user_id)
+        admin_client.auth.admin.delete_user(current_user.user_id)
+        logger.info("auth.users row deleted for user %s — account fully purged.", current_user.user_id)
     except Exception as e:
-        logger.error("Failed to delete auth.users for user %s: %s", user_id, e)
+        logger.error("Failed to delete auth.users for user %s: %s", current_user.user_id, e)
         raise HTTPException(
             status_code=500,
             detail=(
@@ -646,7 +646,7 @@ async def delete_account(
 
     return {
         "deleted": True,
-        "user_id": user_id,
+        "user_id": current_user.user_id,
         "documents_cleaned": len(doc_rows),
     }
 

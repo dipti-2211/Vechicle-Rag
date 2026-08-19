@@ -13,7 +13,7 @@ Security model:
   - Supported algorithms: ES256, RS256, HS256 — works regardless of which
     signing algorithm the Supabase project is configured with.
   - The `sub` claim of a verified token is the user's UUID in auth.users.
-  - All routes use `user_id = Depends(get_current_user)` to get the current user.
+  - All routes use `current_user = Depends(get_current_user)` to get the current user.
   - `require_user` raises HTTP 401 if no valid JWT was provided.
 
 The service role key is NOT used here — it stays in config for DB operations.
@@ -30,7 +30,7 @@ Why JWKS instead of a static secret?
 
 import logging
 from functools import lru_cache
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import jwt
 from jwt import PyJWKClient
@@ -39,6 +39,21 @@ from fastapi import Depends, HTTPException, Request, status
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+class CurrentUser(NamedTuple):
+    """
+    Auth context extracted from a verified Supabase JWT.
+
+    Attributes:
+        user_id:      The user's UUID (auth.users.id / JWT 'sub' claim).
+                      None when no valid JWT is present on the request.
+        is_anonymous: True when the JWT's 'is_anonymous' claim is true
+                      (Supabase sets this for anonymous sign-in sessions).
+                      Always False when user_id is None.
+    """
+    user_id: Optional[str]
+    is_anonymous: bool = False
 
 
 @lru_cache(maxsize=1)
@@ -62,7 +77,7 @@ def _get_jwks_client(jwks_url: str) -> PyJWKClient:
     return PyJWKClient(jwks_url, cache_keys=True)
 
 
-def get_current_user(request: Request) -> Optional[str]:
+def get_current_user(request: Request) -> CurrentUser:
     """
     Extract and verify the Supabase JWT from the Authorization header.
 
@@ -70,8 +85,8 @@ def get_current_user(request: Request) -> Optional[str]:
     both symmetric (HS256) and asymmetric (ES256, RS256) projects work without
     any additional configuration.
 
-    Returns the user UUID string (auth.users.id / JWT `sub` claim),
-    or None if:
+    Returns a CurrentUser(user_id, is_anonymous) namedtuple.
+    user_id is None (and is_anonymous is False) when:
       - No Authorization header is present.
       - The token is malformed, expired, or fails signature verification.
       - SUPABASE_URL is not configured (local dev without auth).
@@ -80,13 +95,13 @@ def get_current_user(request: Request) -> Optional[str]:
         request: The incoming FastAPI request.
 
     Returns:
-        User UUID string, or None.
+        CurrentUser namedtuple. user_id may be None for unauthenticated requests.
     """
     settings = get_settings()
 
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
-        return None
+        return CurrentUser(user_id=None, is_anonymous=False)
 
     token = auth_header[7:]  # strip "Bearer "
 
@@ -95,7 +110,7 @@ def get_current_user(request: Request) -> Optional[str]:
             "SUPABASE_URL is not set — JWT verification skipped. "
             "All requests will be treated as unauthenticated."
         )
-        return None
+        return CurrentUser(user_id=None, is_anonymous=False)
 
     jwks_url = f"{settings.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
 
@@ -113,39 +128,41 @@ def get_current_user(request: Request) -> Optional[str]:
         )
 
         user_id: Optional[str] = payload.get("sub")
+        is_anonymous: bool = bool(payload.get("is_anonymous", False))
+
         if not user_id:
             logger.debug("JWT verified but 'sub' claim is missing")
-            return None
+            return CurrentUser(user_id=None, is_anonymous=False)
 
-        return user_id
+        return CurrentUser(user_id=user_id, is_anonymous=is_anonymous)
 
     except jwt.ExpiredSignatureError:
         logger.debug("JWT token expired")
-        return None
+        return CurrentUser(user_id=None, is_anonymous=False)
     except jwt.InvalidTokenError as e:
         logger.debug("Invalid JWT token: %s", e)
-        return None
+        return CurrentUser(user_id=None, is_anonymous=False)
     except Exception as e:
         logger.warning("JWT verification error: %s", e)
-        return None
+        return CurrentUser(user_id=None, is_anonymous=False)
 
 
 def require_user(
-    user_id: Optional[str] = Depends(get_current_user),
-) -> str:
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
     """
     Dependency that REQUIRES a valid authenticated user.
 
     Raises HTTP 401 if no valid JWT was provided.
 
     Returns:
-        The verified user UUID string.
+        CurrentUser namedtuple with a guaranteed non-None user_id.
     """
-    if user_id is None:
+    if current_user.user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required. Please log in.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return user_id
+    return current_user
 
