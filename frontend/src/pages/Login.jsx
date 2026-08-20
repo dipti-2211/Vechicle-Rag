@@ -16,7 +16,7 @@ function GoogleIcon() {
 }
 
 // ── Error extraction ──────────────────────────────────────────────────────────
-function extractAuthError(err, fallback = 'Login failed. Please try again.') {
+function extractAuthError(err, fallback = "New here? Try creating an account first.") {
   if (import.meta.env.DEV) console.error('[Auron] auth error:', err)
 
   const raw =
@@ -28,8 +28,13 @@ function extractAuthError(err, fallback = 'Login failed. Please try again.') {
   if (!raw || raw === '[object Object]') return fallback
 
   const lower = raw.toLowerCase()
-  if (lower.includes('invalid login credentials') || lower.includes('invalid email or password'))
-    return 'Invalid email or password. Please check your credentials and try again.'
+  if (
+    lower.includes('invalid login credentials') ||
+    lower.includes('invalid email or password') ||
+    lower.includes('user not found') ||
+    lower.includes('no user found')
+  )
+    return "New here? Try creating an account first."
   if (lower.includes('email not confirmed') || lower.includes('not confirmed'))
     return 'Email not confirmed. Please check your inbox.'
   if (lower.includes('rate limit') || lower.includes('too many requests'))
@@ -39,7 +44,7 @@ function extractAuthError(err, fallback = 'Login failed. Please try again.') {
   if (lower.includes('failed to fetch') || lower.includes('networkerror') || lower.includes('network request failed'))
     return 'Network error. Please check your connection and try again.'
 
-  return raw
+  return fallback
 }
 
 // ── Shared outline button style ───────────────────────────────────────────────
