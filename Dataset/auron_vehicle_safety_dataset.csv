@@ -1,0 +1,14 @@
+Brand,Model,Vehicle_Type,Airbags,ABS_EBD,ESC,Traction_Control,Hill_Assist,Rear_Camera,360_Camera,ADAS,Lane_Keep_Assist,Forward_Collision_Warning,Blind_Spot_Monitor,ISOFIX,Safety_Notes
+Hyundai,Exter,SUV,6,Yes,Yes,Yes,Yes,Yes,Selected variants,No,No,No,No,Yes,Standard safety equipment varies by variant
+Hyundai,Venue,SUV,6,Yes,Yes,Yes,Yes,Yes,Selected variants,Selected variants,Selected variants,Selected variants,Selected variants,Yes,Safety features vary by variant
+Hyundai,Venue N Line,SUV,6,Yes,Yes,Yes,Yes,Yes,Selected variants,Selected variants,Selected variants,Selected variants,Selected variants,Yes,Sport variant; safety equipment varies by trim
+Hyundai,Creta,SUV,6,Yes,Yes,Yes,Yes,Yes,Selected variants,Selected variants,Selected variants,Selected variants,Selected variants,Yes,Higher variants offer additional active-safety technology
+Hyundai,Creta N Line,SUV,6,Yes,Yes,Yes,Yes,Yes,Selected variants,Selected variants,Selected variants,Selected variants,Selected variants,Yes,N Line variant with advanced safety technology on selected trims
+Hyundai,Alcazar,SUV,6,Yes,Yes,Yes,Yes,Yes,Selected variants,Selected variants,Selected variants,Selected variants,Selected variants,Yes,Three-row SUV; safety equipment varies by trim
+Hyundai,Grand i10 NIOS,Hatchback,6,Yes,Yes,Selected variants,Yes,Yes,No,No,No,No,No,Yes,Core safety features vary by variant
+Hyundai,i20,Hatchback,6,Yes,Yes,Selected variants,Yes,Yes,Selected variants,No,No,No,No,Yes,Safety equipment varies by trim
+Hyundai,i20 N Line,Hatchback,6,Yes,Yes,Yes,Yes,Yes,Selected variants,No,No,No,No,Yes,Sport variant; standard and optional safety features vary
+Hyundai,Aura,Sedan,6,Yes,Yes,Selected variants,Yes,Yes,No,No,No,No,No,Yes,Compact sedan safety package varies by variant
+Hyundai,Verna,Sedan,6,Yes,Yes,Yes,Yes,Yes,Selected variants,Yes,Yes,Selected variants,Yes,ADAS and advanced safety features on selected trims
+Hyundai,Creta Electric,EV,6,Yes,Yes,Yes,Yes,Yes,Selected variants,Selected variants,Selected variants,Selected variants,Selected variants,Yes,EV safety equipment varies by variant
+Hyundai,IONIQ 5,EV,6,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Selected features,Yes,Premium EV with extensive active-safety technology

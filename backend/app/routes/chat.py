@@ -29,7 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.auth.deps import get_current_user, CurrentUser
+from app.auth.deps import get_current_user, require_user, CurrentUser
 from app.models.database import get_database
 from app.models.schemas import (
     AnalyticsResponse,
@@ -91,7 +91,7 @@ class ConversationUpdateTitle(BaseModel):
 )
 async def ask_question(
     body: ChatRequest,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> ChatResponse:
     """
     RAG pipeline endpoint:
@@ -202,7 +202,7 @@ async def ask_question(
 )
 async def stream_question(
     body: ChatRequest,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> StreamingResponse:
     """
     Streaming RAG endpoint — yields SSE tokens, saves message to DB at end.
@@ -316,7 +316,7 @@ async def stream_question(
     description="Returns all conversations, ordered by most recently updated.",
 )
 async def list_conversations(
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> ConversationListResponse:
     """List all conversations for the current user."""
     service = _get_service()
@@ -332,7 +332,7 @@ async def list_conversations(
 )
 async def create_conversation(
     data: ConversationCreate = ConversationCreate(),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> ConversationResponse:
     """Create a new conversation (scoped to current user)."""
     service = _get_service()
@@ -348,7 +348,7 @@ async def create_conversation(
 )
 async def get_conversation(
     conversation_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> ConversationResponse:
     """Get a single conversation by ID (user-scoped)."""
     service = _get_service()
@@ -373,7 +373,7 @@ async def get_conversation(
 async def update_conversation_title(
     conversation_id: str,
     data: ConversationUpdateTitle,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> ConversationResponse:
     """Update a conversation's title (user-scoped)."""
     service = _get_service()
@@ -397,7 +397,7 @@ async def update_conversation_title(
 )
 async def delete_conversation(
     conversation_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> ConversationDeleteResponse:
     """Delete a conversation and all its messages (user-scoped)."""
     service = _get_service()
@@ -423,7 +423,7 @@ async def delete_conversation(
 )
 async def get_messages(
     conversation_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> MessageListResponse:
     """Get all messages in a conversation (user-scoped)."""
     service = _get_service()
@@ -450,7 +450,11 @@ async def get_messages(
     ),
     responses={404: {"model": ErrorResponse}},
 )
-async def rate_message(message_id: str, body: RatingUpdate) -> MessageResponse:
+async def rate_message(
+    message_id: str,
+    body: RatingUpdate,
+    current_user: CurrentUser = Depends(require_user),
+) -> MessageResponse:
     """Rate an assistant message."""
     # Validate rating value
     if body.rating is not None and body.rating not in (1, -1):
@@ -484,7 +488,7 @@ async def rate_message(message_id: str, body: RatingUpdate) -> MessageResponse:
     ),
 )
 async def get_analytics(
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> AnalyticsResponse:
     """Return analytics for the current user's conversations and documents."""
     service = _get_service()
@@ -513,16 +517,16 @@ async def export_conversation(
     """
     service = _get_service()
 
-    # Fetch conversation metadata
-    conv = await service.get_conversation(conversation_id)
+    # Fetch conversation metadata — scoped to current user to prevent cross-user export
+    conv = await service.get_conversation(conversation_id, user_id=current_user.user_id)
     if conv is None:
         raise HTTPException(
             status_code=404,
             detail=f"Conversation not found: {conversation_id}",
         )
 
-    # Fetch all messages
-    msg_response = await service.get_messages(conversation_id)
+    # Fetch all messages (scoped via conversation ownership already verified above)
+    msg_response = await service.get_messages(conversation_id, user_id=current_user.user_id)
     messages = msg_response.messages if msg_response else []
 
     # Build Markdown content

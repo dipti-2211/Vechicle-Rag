@@ -22,7 +22,7 @@ from typing import Optional
 import aiofiles
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File, status
 
-from app.auth.deps import get_current_user, CurrentUser
+from app.auth.deps import get_current_user, require_user, CurrentUser
 from app.config import get_settings
 from app.models.database import get_database
 from app.models.schemas import (
@@ -306,7 +306,7 @@ async def _process_document(
 async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> DocumentResponse:
     """Handle document upload, save file, create DB record, and trigger processing."""
     settings = get_settings()
@@ -389,7 +389,7 @@ async def upload_document(
     description="Returns aggregate statistics: total, ready, processing, and error counts, plus total chunks and storage used.",
 )
 async def get_document_stats(
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> DocumentStats:
     """Get aggregate document statistics for the current user."""
     service = _get_service()
@@ -413,7 +413,7 @@ async def list_documents(
         description="Filter by file type: pdf, csv, xlsx, docx, or txt",
         pattern="^(pdf|csv|xlsx|docx|txt)$",
     ),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> DocumentListResponse:
     """List documents for the current user with optional filters."""
     service = _get_service()
@@ -429,7 +429,7 @@ async def list_documents(
 )
 async def get_document_status(
     document_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> DocumentStatusResponse:
     """Get just the status fields for a document (efficient for UI polling).
 
@@ -455,7 +455,7 @@ async def get_document_status(
 )
 async def get_document(
     document_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> DocumentResponse:
     """Get a single document by ID (user-scoped)."""
     service = _get_service()
@@ -479,7 +479,7 @@ async def get_document(
 )
 async def delete_document(
     document_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> DocumentDeleteResponse:
     """Delete a document, its file on disk, Supabase Storage file, and its vectors in ChromaDB."""
     service = _get_service()
@@ -540,7 +540,7 @@ async def delete_document(
 )
 async def preview_document(
     document_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ) -> DocumentPreviewResponse:
     """
     Parse the stored file and return a content preview.
